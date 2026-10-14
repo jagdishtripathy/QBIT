@@ -130,10 +130,10 @@ Default pin assignments for the ESP32-C3 Super Mini. All pins can be reassigned 
 
 | Function | Default GPIO | Direction | Connection |
 |---|---|---|---|
-| Touch Sensor (TTP223) | GPIO 1 | Input | TTP223 OUT -> GPIO 1 |
-| Buzzer | GPIO 2 | Output | GPIO 2 -> Buzzer +, Buzzer - -> GND |
-| OLED SDA | GPIO 20 | I2C Data | SSD1306 SDA -> GPIO 20 |
-| OLED SCL | GPIO 21 | I2C Clock | SSD1306 SCL -> GPIO 21 |
+| Touch Sensor (TTP223) | GPIO 4 | Input | TTP223 OUT -> GPIO 4 |
+| Buzzer | GPIO 5 | Output | GPIO 5 -> Buzzer +, Buzzer - -> GND |
+| OLED SDA | GPIO 6 | I2C Data | SSD1306 SDA -> GPIO 6 |
+| OLED SCL | GPIO 7 | I2C Clock | SSD1306 SCL -> GPIO 7 |
 
 Power connections:
 

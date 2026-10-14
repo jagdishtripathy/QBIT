@@ -21,10 +21,10 @@ static SemaphoreHandle_t _prefsMutex = NULL;
 #define TZ_IANA_MAX_LEN 64
 
 // GPIO pin defaults (ESP32-C3 Super Mini)
-static uint8_t _pinTouch  = 1;
-static uint8_t _pinBuzzer = 2;
-static uint8_t _pinSDA    = 20;
-static uint8_t _pinSCL    = 21;
+static uint8_t _pinTouch  = 4;
+static uint8_t _pinBuzzer = 5;
+static uint8_t _pinSDA    = 6;
+static uint8_t _pinSCL    = 7;
 
 // Display
 static uint8_t _brightness = 0x80;
@@ -126,10 +126,10 @@ void settingsInit() {
     _prefsReady = true;
 
     // Read GPIO pin config first (needed before hardware init)
-    _pinTouch  = _prefs.getUChar("pinTouch",  1);
-    _pinBuzzer = _prefs.getUChar("pinBuzzer", 2);
-    _pinSDA    = _prefs.getUChar("pinSDA",    20);
-    _pinSCL    = _prefs.getUChar("pinSCL",    21);
+    _pinTouch  = _prefs.getUChar("pinTouch",  4);
+    _pinBuzzer = _prefs.getUChar("pinBuzzer", 5);
+    _pinSDA    = _prefs.getUChar("pinSDA",    6);
+    _pinSCL    = _prefs.getUChar("pinSCL",    7);
 
     Serial.printf("GPIO pins: touch=%u buzzer=%u sda=%u scl=%u\n",
                   _pinTouch, _pinBuzzer, _pinSDA, _pinSCL);

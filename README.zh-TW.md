@@ -130,10 +130,10 @@ STL 模型檔可於 MakerWorld 下載：
 
 | 功能 | 預設 GPIO | 方向 | 接線 |
 |---|---|---|---|
-| 觸控感測器 (TTP223) | GPIO 1 | 輸入 | TTP223 OUT -> GPIO 1 |
-| 蜂鳴器 | GPIO 2 | 輸出 | GPIO 2 -> 蜂鳴器 +，蜂鳴器 - -> GND |
-| OLED SDA | GPIO 20 | I2C 資料 | SSD1306 SDA -> GPIO 20 |
-| OLED SCL | GPIO 21 | I2C 時脈 | SSD1306 SCL -> GPIO 21 |
+| 觸控感測器 (TTP223) | GPIO 4 | 輸入 | TTP223 OUT -> GPIO 4 |
+| 蜂鳴器 | GPIO 5 | 輸出 | GPIO 5 -> 蜂鳴器 +，蜂鳴器 - -> GND |
+| OLED SDA | GPIO 6 | I2C 資料 | SSD1306 SDA -> GPIO 6 |
+| OLED SCL | GPIO 7 | I2C 時脈 | SSD1306 SCL -> GPIO 7 |
 
 電源接線：
 

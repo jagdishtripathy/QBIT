@@ -33,7 +33,7 @@
 // ==========================================================================
 
 #define BOOT_GIF_SPEED        10
-#define CONNECTED_INFO_MS     3000
+#define CONNECTED_INFO_MS     7000
 #define CLAIM_TIMEOUT_MS      30000
 #define CLAIM_LONG_PRESS_MS   2000
 #define HISTORY_IDLE_MS       3000

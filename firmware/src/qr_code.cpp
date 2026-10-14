@@ -43,7 +43,7 @@ void showWifiQR(const char *ssid, const char *password) {
 
     // Label below QR code
     u8g2.setFont(u8g2_font_5x7_tr);
-    const char *label = "Scan to connect";
+    const char *label = "Scan / Tap for text";
     uint8_t labelW = u8g2.getStrWidth(label);
     u8g2.drawStr((128 - labelW) / 2, 64, label);
 

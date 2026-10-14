@@ -1010,10 +1010,10 @@ void wifiApplyApRfStabilityForPcbAntenna() {
 #endif
 }
 
-// Restore default TX power for STA. setTxPower() is global; 13dBm from AP fix would otherwise persist and weaken STA/MQTT/dashboard.
+// Restore stable TX power for STA. Use 15dBm for battery stability and to prevent brownouts on ESP32-C3 PCB antenna.
 void wifiRestoreStaTxPower() {
 #if defined(ESP32)
     if (WiFi.getMode() == WIFI_STA)
-        WiFi.setTxPower(WIFI_POWER_19_5dBm);
+        WiFi.setTxPower(WIFI_POWER_15dBm);
 #endif
 }
