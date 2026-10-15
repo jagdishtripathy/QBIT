@@ -2,15 +2,25 @@
 
 <div align="center">
 
-# QBIT
+# QBIT（修改與電池優化版 Fork）
 
 **一款開源的 ESP32-C3 桌面陪伴機器人與個人 IoT 虛擬化身。**
 
-[![GitHub stars](https://img.shields.io/github/stars/seanchangx/QBIT)](https://github.com/seanchangx/QBIT)
+> [!NOTE]
+> **自訂 Fork 說明**：本儲存庫由 [@jagdishtripathy](https://github.com/jagdishtripathy) 維護，針對 3.7V 鋰電池、TP4056 充電模組與硬體保護進行了修改與優化。
+> 
+> **原始上游專案**：[SeanChangX/QBIT](https://github.com/seanchangx/QBIT)（作者：Sean Chang）。所有核心韌體架構、Web 平台與 3D 列印外殼設計版權均屬原作者。
+> 
+> **本次修改重點：**
+> * **硬體電氣保護**：調整腳位（SCL: GPIO 7、SDA: GPIO 6、Touch: GPIO 4、Buzzer: GPIO 5），避開 ESP32-C3 開機 Strapping Pin (GPIO 2)，並加入被動式蜂鳴器保護防護說明，避免損壞晶片。
+> * **3.7V 鋰電池與 TP4056 電源支援**：提供可容納於 3D 列印外殼內的接線說明，使用 TP4056 與滑動開關供電。
+> * **Wi-Fi 掉線與重啟修復**：限制 Wi-Fi STA 發射功率至 `15 dBm`，消除 500mA 峰值突波導致的電池電壓驟降與 Brownout 循環重開機。
+> * **體驗優化**：延長開機 IP 顯示時間（3 秒至 7 秒），QR code 增加點擊切換文字提示，並支援 Windows COM port 自動偵測。
+
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC_BY--NC--SA_4.0-blue.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 [![Platform](https://img.shields.io/badge/Platform-ESP32--C3-green.svg)](#硬體需求)
-[![Web Platform](https://img.shields.io/badge/Web-qbit.labxcloud.com-purple.svg)](https://qbit.labxcloud.com)
-[![release](https://img.shields.io/github/v/release/seanchangx/QBIT)](https://github.com/seanchangx/QBIT/releases)
+[![Upstream](https://img.shields.io/badge/Upstream-SeanChangX%2FQBIT-blue.svg)](https://github.com/seanchangx/QBIT)
+[![Fork](https://img.shields.io/badge/Fork-jagdishtripathy%2FQBIT-orange.svg)](https://github.com/jagdishtripathy/QBIT)
 
 <br>
 

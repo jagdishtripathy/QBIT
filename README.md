@@ -2,15 +2,25 @@
 
 <div align="center">
 
-# QBIT
+# QBIT (Modified & Battery-Optimized Fork)
 
 **An open-source ESP32-C3 desktop companion robot and personal IoT avatar.**
 
-[![GitHub stars](https://img.shields.io/github/stars/seanchangx/QBIT)](https://github.com/seanchangx/QBIT)
+> [!NOTE]
+> **Custom Fork Notice**: This repository is a customized and battery-optimized fork maintained by [@jagdishtripathy](https://github.com/jagdishtripathy).
+> 
+> **Original Upstream Source**: [SeanChangX/QBIT](https://github.com/seanchangx/QBIT) by Sean Chang. All core firmware architecture, web platform, and 3D enclosure designs are credited to the original author.
+> 
+> **Why this fork was created:**
+> * **Hardware Protection**: Re-mapped GPIO pins (OLED SCL: GPIO 7, SDA: GPIO 6, Touch: GPIO 4, Buzzer: GPIO 5) to move away from ESP32-C3 boot strapping pin GPIO 2, and added safeguards to prevent burnt/damaged ESP32-C3 boards.
+> * **3.7V LiPo + TP4056 Battery Optimization**: Complete wiring and stability guide for powering QBIT inside the 3D-printed enclosure using a 3.7V LiPo battery, TP4056 charging module, and sliding switch without needing bulky boost converters.
+> * **Brownout & Wi-Fi Disconnect Fix**: Capped Wi-Fi STA transmission power from 19.5 dBm to `15 dBm`, eliminating 500 mA current surges that caused battery voltage sags and continuous brownout reboot loops.
+> * **UX Improvements**: Extended local IP address display on boot from 3s to 7s, added `"Scan / Tap for text"` QR prompt, and fixed `platformio.ini` to auto-detect Windows COM ports.
+
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC_BY--NC--SA_4.0-blue.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 [![Platform](https://img.shields.io/badge/Platform-ESP32--C3-green.svg)](#hardware-requirements)
-[![Web Platform](https://img.shields.io/badge/Web-qbit.labxcloud.com-purple.svg)](https://qbit.labxcloud.com)
-[![release](https://img.shields.io/github/v/release/seanchangx/QBIT)](https://github.com/seanchangx/QBIT/releases)
+[![Upstream](https://img.shields.io/badge/Upstream-SeanChangX%2FQBIT-blue.svg)](https://github.com/seanchangx/QBIT)
+[![Fork](https://img.shields.io/badge/Fork-jagdishtripathy%2FQBIT-orange.svg)](https://github.com/jagdishtripathy/QBIT)
 
 <br>
 
@@ -124,14 +134,14 @@ Download the STL files for the QBIT enclosure from MakerWorld:
 
 <img src="https://makerworld.com/favicon.ico" width="16" height="16" alt="MakerWorld" style="vertical-align: middle" /> [MakerWorld: QBIT - Your IoT Desk Robot (ESP32-C3)](https://makerworld.com/en/models/2400803-qbit-your-iot-desk-robot-esp32-c3#profileId-2631417)
 
-### Wiring
+### Wiring & Pin Assignments
 
 Default pin assignments for the ESP32-C3 Super Mini. All pins can be reassigned through the web dashboard at `http://qbit.local` and are stored in NVS (persistent across reboots; changes require a reboot to take effect).
 
 | Function | Default GPIO | Direction | Connection |
 |---|---|---|---|
 | Touch Sensor (TTP223) | GPIO 4 | Input | TTP223 OUT -> GPIO 4 |
-| Buzzer | GPIO 5 | Output | GPIO 5 -> Buzzer +, Buzzer - -> GND |
+| Buzzer (Optional) | GPIO 5 | Output | Driven via 2N2222 transistor or 1kΩ resistor -> GPIO 5 |
 | OLED SDA | GPIO 6 | I2C Data | SSD1306 SDA -> GPIO 6 |
 | OLED SCL | GPIO 7 | I2C Clock | SSD1306 SCL -> GPIO 7 |
 
@@ -139,9 +149,39 @@ Power connections:
 
 | Component | VCC | GND |
 |---|---|---|
-| SSD1306 OLED | 3.3V | GND |
-| TTP223 Touch Sensor | 3.3V | GND |
-| Passive Buzzer | -- | GND |
+| SSD1306 OLED | 3.3V (ESP32 pin) | GND |
+| TTP223 Touch Sensor | 3.3V (ESP32 pin) | GND |
+
+> [!CAUTION]
+> ### Critical Electrical Safety Rules
+>
+> 1. **Connect Battery / Switch to the `5V` (VBUS) pin, NEVER directly to `3.3V`!**
+>    * A fully charged 3.7V LiPo battery reaches **4.2V** (and 4.2V when plugged into the TP4056 charger).
+>    * The ESP32-C3 absolute maximum voltage limit on the `3.3V` rail is **3.6V**. Connecting raw battery power to `3.3V` will instantly fry the ESP32-C3 silicon die!
+>    * Connecting through the **`5V` (VBUS) pin** routes power through the board's onboard LDO regulator, safely stepping the 3.7V–4.2V down to a stable 3.3V.
+>
+> 2. **Passive Buzzer Protection**:
+>    * Standard electromagnetic passive buzzers have an internal coil of only **~16 Ω**, drawing **>200 mA** (ESP32 GPIO limit is 40 mA) and producing inductive flyback voltage spikes of 20V–30V when switched off.
+>    * **Safe Solution A (Full volume)**: Use a **2N2222 NPN transistor** (Base to GPIO 5 via a 1kΩ resistor, Emitter to GND, Collector to Buzzer -) with a **1N4007 flyback diode** across the buzzer terminals.
+>    * **Safe Solution B (Quiet)**: Solder a **1kΩ resistor in series** with the buzzer.
+>    * **Safe Solution C (Recommended)**: **Omit the buzzer entirely.** QBIT works 100% on the OLED screen with all animations, games, clock, weather, and poke notifications without sound!
+
+### Battery & Power Wiring Diagram
+
+```
+[ 3.7V LiPo Battery ]
+     │ (+)          │ (-)
+     ▼              ▼
+   [ B+ ]        [ B- ]   ─── TP4056 Charger
+   [OUT+]        [OUT-]
+     │              │
+     │              └────────────────────────► Common GND (ESP32, OLED, Touch)
+     │
+[ Slide Switch ]
+     │
+     └───────────────────────────────────────► ESP32-C3 Super Mini "5V" (VBUS) pin
+                                                (Do NOT connect to 3V3!)
+```
 
 The I2C bus runs at 400 kHz. No external pull-up resistors are needed if the OLED module has built-in pull-ups (most breakout boards do).
 
@@ -488,14 +528,26 @@ To set up CI/CD, add these repository secrets in GitHub (Settings > Secrets and 
 
 ## Firmware Build from Source
 
-Requirements: [PlatformIO CLI](https://docs.platformio.org/en/latest/core/installation/index.html)
+Requirements: [PlatformIO CLI](https://docs.platformio.org/en/latest/core/installation/index.html) (or PlatformIO extension in VSCode / Antigravity).
 
 ```bash
 cd firmware
 pio run --target upload         # compile and flash firmware
-pio run --target uploadfs       # upload LittleFS filesystem (animations, web dashboard)
+pio run --target uploadfs       # CRITICAL: upload LittleFS filesystem (dashboard UI & animations)
 pio device monitor              # open serial monitor (115200 baud)
 ```
+
+> [!IMPORTANT]
+> **Do not skip `pio run --target uploadfs`!**
+> The local web dashboard (`index.html`, `script.js`, `style.css`) lives on the flash filesystem partition. If you only run `upload`, the web server will start but return `404 File not found`.
+
+> [!TIP]
+> **Windows Users**: 
+> * [`firmware/platformio.ini`](firmware/platformio.ini) is configured to automatically detect your COM port (e.g., `COM4`).
+> * If `pio` is not recognized in PowerShell, add PlatformIO's Python scripts directory:
+>   ```powershell
+>   $env:Path += ";$env:APPDATA\Python\Python312\Scripts"
+>   ```
 
 The firmware connects to the backend WebSocket server using the `WS_HOST`, `WS_PORT`, and `WS_API_KEY` build flags. Override them in [`firmware/platformio.ini`](firmware/platformio.ini) under `build_flags` (commented examples are included). The fallback defaults `localhost:3001` with an empty API key are defined in [`firmware/src/network_task.cpp`](firmware/src/network_task.cpp). For production builds via GitHub Actions, these values are injected from repository secrets at compile time.
 
