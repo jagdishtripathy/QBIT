@@ -86,7 +86,6 @@ function setMqttPill(el, enabled, connected) {
   }
 
   function openFwPopover() {
-    if (!hasFwUpdate) return;
     clearTimeout(fwPopoverCloseTimer);
     devFwPopover.hidden = false;
     devFirmwarePill.setAttribute('aria-expanded', 'true');
@@ -118,16 +117,15 @@ function setMqttPill(el, enabled, connected) {
     devCombinedUptime.textContent = 'Boot: ' + boot + ' · Server: ' + srv;
 
     devFirmwarePill.textContent = fmtFwVerLabel(d.firmware);
+    devFwPopoverCur.textContent = fmtFwVerLabel(d.firmware);
+    devFwPopoverLatest.textContent = d.latest_version ? fmtFwVerLabel(d.latest_version) : (fmtFwVerLabel(d.firmware) + ' (Up to date)');
     hasFwUpdate = !!(d.update_available && d.latest_version);
     if (hasFwUpdate) {
       devFwNotifyDot.hidden = false;
-      devFwPopoverCur.textContent = fmtFwVerLabel(d.firmware);
-      devFwPopoverLatest.textContent = fmtFwVerLabel(d.latest_version);
       devFirmwarePill.classList.add('has-fw-update');
     } else {
       devFwNotifyDot.hidden = true;
       devFirmwarePill.classList.remove('has-fw-update');
-      closeFwPopover();
     }
   }
 
@@ -140,7 +138,6 @@ function setMqttPill(el, enabled, connected) {
     devFwHost.addEventListener('mouseleave', scheduleCloseFwPopover);
     devFirmwarePill.addEventListener('click', function (e) {
       e.stopPropagation();
-      if (!hasFwUpdate) return;
       if (devFwPopover.hidden) openFwPopover();
       else closeFwPopover();
     });
@@ -175,9 +172,134 @@ function setMqttPill(el, enabled, connected) {
       });
   });
 
+  var btnDeviceOta = document.getElementById('btnDeviceOta');
+  var btnCloudOta = document.getElementById('btnCloudOta');
+  var btnLocalOta = document.getElementById('btnLocalOta');
+  var otaFileInput = document.getElementById('otaFileInput');
+  var otaProgressWrap = document.getElementById('otaProgressWrap');
+  var otaProgressFill = document.getElementById('otaProgressFill');
+  var otaProgressPct = document.getElementById('otaProgressPct');
   var btnWifiReset = document.getElementById('btnWifiReset');
   var btnReboot = document.getElementById('btnReboot');
   var devMsg = document.getElementById('devMsg');
+  var otaPollTimer = null;
+
+  function setOtaProgress(pct, statusText, isErr) {
+    if (otaProgressWrap) {
+      otaProgressWrap.style.display = 'flex';
+      otaProgressWrap.setAttribute('aria-hidden', 'false');
+      var v = Math.max(0, Math.min(100, Math.round(pct || 0)));
+      otaProgressFill.style.width = v + '%';
+      otaProgressPct.textContent = v + '%';
+    }
+    if (statusText != null) {
+      devMsg.className = 'msg ' + (isErr ? 'error' : 'ok');
+      devMsg.textContent = statusText;
+      devMsg.style.display = 'block';
+    }
+  }
+
+  function startCloudOtaPolling() {
+    if (otaPollTimer) clearInterval(otaPollTimer);
+    var lostCount = 0;
+    otaPollTimer = setInterval(function () {
+      fetch('/api/ota/status')
+        .then(function (r) { return r.json(); })
+        .then(function (st) {
+          lostCount = 0;
+          setOtaProgress(st.progress || 0, 'Wireless OTA: ' + (st.status || 'Updating...'), false);
+          if (!st.in_progress && (st.progress || 0) < 100 && st.status && st.status.toLowerCase().indexOf('fail') >= 0) {
+            clearInterval(otaPollTimer);
+            otaPollTimer = null;
+            setOtaProgress(st.progress || 0, 'OTA failed: ' + st.status, true);
+          } else if ((st.progress || 0) >= 100) {
+            clearInterval(otaPollTimer);
+            otaPollTimer = null;
+            setOtaProgress(100, 'Update complete! QBIT is rebooting... Page will reload in 8s.', false);
+            setTimeout(function () { window.location.reload(); }, 8000);
+          }
+        })
+        .catch(function () {
+          lostCount++;
+          if (lostCount >= 3) {
+            clearInterval(otaPollTimer);
+            otaPollTimer = null;
+            setOtaProgress(100, 'QBIT is rebooting into new firmware... Reloading in 6s.', false);
+            setTimeout(function () { window.location.reload(); }, 6000);
+          }
+        });
+    }, 1000);
+  }
+
+  if (btnDeviceOta) {
+    btnDeviceOta.addEventListener('click', function (e) {
+      e.stopPropagation();
+      if (devFwPopover.hidden) openFwPopover();
+      else closeFwPopover();
+    });
+  }
+
+  if (btnCloudOta) {
+    btnCloudOta.addEventListener('click', function () {
+      closeFwPopover();
+      if (!confirm('Download and flash the latest firmware from GitHub Cloud over Wi-Fi?\n\nYour animations and settings will be preserved.')) return;
+      setOtaProgress(0, 'Requesting Wireless Cloud OTA...', false);
+      fetch('/api/ota/cloud', { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d && d.ok) {
+            startCloudOtaPolling();
+          } else {
+            setOtaProgress(0, (d && d.error) ? d.error : 'Failed to start Cloud OTA', true);
+          }
+        })
+        .catch(function () {
+          setOtaProgress(0, 'Failed to contact QBIT for Cloud OTA', true);
+        });
+    });
+  }
+
+  if (btnLocalOta && otaFileInput) {
+    btnLocalOta.addEventListener('click', function () {
+      closeFwPopover();
+      otaFileInput.click();
+    });
+    otaFileInput.addEventListener('change', function (e) {
+      var file = e.target.files && e.target.files[0];
+      e.target.value = '';
+      if (!file) return;
+      if (!file.name.endsWith('.bin')) {
+        alert('Please select a compiled firmware .bin file.');
+        return;
+      }
+      if (!confirm('Upload and flash ' + file.name + ' (' + fmt(file.size) + ') wirelessly?')) return;
+      var fd = new FormData();
+      fd.append('file', file, file.name);
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/ota/upload', true);
+      xhr.upload.onprogress = function (ev) {
+        if (ev.lengthComputable) {
+          var pct = Math.round((ev.loaded * 100) / ev.total);
+          setOtaProgress(pct, 'Uploading ' + file.name + ' (' + pct + '%)...', false);
+        }
+      };
+      xhr.onload = function () {
+        if (xhr.status === 200) {
+          setOtaProgress(100, 'Firmware flashed! Rebooting QBIT... Page will reload in 7s.', false);
+          setTimeout(function () { window.location.reload(); }, 7000);
+        } else {
+          var errMsg = 'Upload failed';
+          try { errMsg = JSON.parse(xhr.responseText).error || errMsg; } catch (ex) {}
+          setOtaProgress(0, errMsg, true);
+        }
+      };
+      xhr.onerror = function () {
+        setOtaProgress(0, 'Connection lost during firmware upload.', true);
+      };
+      setOtaProgress(0, 'Starting firmware upload...', false);
+      xhr.send(fd);
+    });
+  }
 
   btnWifiReset.addEventListener('click', function () {
     if (!confirm('Reset WiFi? The device will disconnect. You can then connect to its AP to choose a new network.')) return;
@@ -510,10 +632,113 @@ async function df(n) {
   ls();
 }
 
-// Upload a single file
+// RLE encoder/decoder for .qgif frames (saves ~75% flash space automatically)
+function qgifRleEncodeFrame(frame) {
+  var out = [];
+  var n = frame.length;
+  var i = 0;
+  while (i < n) {
+    var b = frame[i];
+    var runLen = 1;
+    while (i + runLen < n && runLen < 127 && frame[i + runLen] === b) runLen++;
+    if (runLen >= 3) {
+      out.push(0x80 | runLen, b);
+      i += runLen;
+    } else {
+      var litStart = i;
+      var litLen = 0;
+      while (i < n && litLen < 127) {
+        var r = 1;
+        while (i + r < n && r < 3 && frame[i + r] === frame[i]) r++;
+        if (r >= 3) break;
+        i++;
+        litLen++;
+      }
+      out.push(litLen);
+      for (var k = 0; k < litLen; k++) out.push(frame[litStart + k]);
+    }
+  }
+  return new Uint8Array(out);
+}
+
+function qgifRleDecodeFrame(comp, expectedLen) {
+  var out = new Uint8Array(expectedLen);
+  var si = 0, di = 0;
+  while (si < comp.length && di < expectedLen) {
+    var ctrl = comp[si++];
+    if (ctrl & 0x80) {
+      var runCount = ctrl & 0x7F;
+      var val = comp[si++];
+      for (var r = 0; r < runCount && di < expectedLen; r++) {
+        out[di++] = val;
+      }
+    } else {
+      var litCount = ctrl;
+      for (var k = 0; k < litCount && si < comp.length && di < expectedLen; k++) {
+        out[di++] = comp[si++];
+      }
+    }
+  }
+  return out;
+}
+
+function compressQgifBuffer(buf) {
+  if (!buf || buf.byteLength < 7) return null;
+  var view = new DataView(buf);
+  var fc = view.getUint8(0);
+  var w = view.getUint16(1, true);
+  var rawH = view.getUint16(3, true);
+  if ((rawH & 0x8000) !== 0) return null; // already RLE-compressed
+  var h = rawH;
+  if (fc === 0 || w !== 128 || h !== 64) return null;
+  var frameSize = 1024;
+  var dataStart = 5 + fc * 2;
+  if (buf.byteLength < dataStart + fc * frameSize) return null;
+
+  var compFrames = [];
+  var offsets = [0];
+  var totalComp = 0;
+  for (var i = 0; i < fc; i++) {
+    var rawFrame = new Uint8Array(buf, dataStart + i * frameSize, frameSize);
+    var c = qgifRleEncodeFrame(rawFrame);
+    compFrames.push(c);
+    totalComp += c.length;
+    offsets.push(totalComp);
+  }
+
+  var outLen = 5 + fc * 2 + (fc + 1) * 4 + totalComp;
+  if (outLen >= buf.byteLength) return null;
+  var outBuf = new ArrayBuffer(outLen);
+  var outView = new DataView(outBuf);
+  var outBytes = new Uint8Array(outBuf);
+  outView.setUint8(0, fc);
+  outView.setUint16(1, w, true);
+  outView.setUint16(3, h | 0x8000, true);
+  outBytes.set(new Uint8Array(buf, 5, fc * 2), 5);
+  var offPos = 5 + fc * 2;
+  for (var j = 0; j <= fc; j++) {
+    outView.setUint32(offPos + j * 4, offsets[j], true);
+  }
+  var writePos = offPos + (fc + 1) * 4;
+  for (var m = 0; m < fc; m++) {
+    outBytes.set(compFrames[m], writePos);
+    writePos += compFrames[m].length;
+  }
+  return outBuf;
+}
+
+// Upload a single file (auto-compresses uncompressed .qgif before sending)
 async function uf1(file) {
+  var uploadFile = file;
+  try {
+    var ab = await file.arrayBuffer();
+    var compAb = compressQgifBuffer(ab);
+    if (compAb) {
+      uploadFile = new File([compAb], file.name, { type: 'application/octet-stream' });
+    }
+  } catch (e) {}
   var fd = new FormData();
-  fd.append('file', file);
+  fd.append('file', uploadFile, file.name);
   var r = await fetch('/api/upload', { method: 'POST', body: fd });
   var d = await r.json();
   return { ok: r.ok, name: file.name, error: d.error || 'Upload failed' };
@@ -799,16 +1024,29 @@ function parseQgif(buf) {
   var view = new DataView(buf);
   var frameCount = view.getUint8(0);
   var width = view.getUint16(1, true);
-  var height = view.getUint16(3, true);
+  var rawHeight = view.getUint16(3, true);
+  var isRle = (rawHeight & 0x8000) !== 0;
+  var height = rawHeight & 0x7FFF;
   var delays = [];
   for (var i = 0; i < frameCount; i++) {
     delays.push(view.getUint16(5 + i * 2, true));
   }
   var frameSize = Math.ceil(width * height / 8);
-  var dataStart = 5 + frameCount * 2;
   var frames = [];
-  for (var i = 0; i < frameCount; i++) {
-    frames.push(new Uint8Array(buf, dataStart + i * frameSize, frameSize));
+  if (isRle) {
+    var offBase = 5 + frameCount * 2;
+    var dataStart = offBase + (frameCount + 1) * 4;
+    for (var j = 0; j < frameCount; j++) {
+      var startOff = view.getUint32(offBase + j * 4, true);
+      var endOff = view.getUint32(offBase + (j + 1) * 4, true);
+      var compSlice = new Uint8Array(buf, dataStart + startOff, endOff - startOff);
+      frames.push(qgifRleDecodeFrame(compSlice, frameSize));
+    }
+  } else {
+    var rawStart = 5 + frameCount * 2;
+    for (var k = 0; k < frameCount; k++) {
+      frames.push(new Uint8Array(buf, rawStart + k * frameSize, frameSize));
+    }
   }
   return { frameCount: frameCount, width: width, height: height, delays: delays, frames: frames };
 }

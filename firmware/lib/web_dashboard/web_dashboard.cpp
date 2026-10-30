@@ -7,6 +7,7 @@
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <Update.h>
 #if defined(ESP32) || defined(ESP8266)
 #include <WiFi.h>
 #endif
@@ -253,7 +254,7 @@ static void handleUploadData(AsyncWebServerRequest *request,
             } else {
                 uint8_t  fc = hdr[0];
                 uint16_t w  = hdr[1] | ((uint16_t)hdr[2] << 8);
-                uint16_t h  = hdr[3] | ((uint16_t)hdr[4] << 8);
+                uint16_t h  = (hdr[3] | ((uint16_t)hdr[4] << 8)) & ~QGIF_RLE_FLAG;
                 if (fc == 0 || w != QGIF_FRAME_WIDTH || h != QGIF_FRAME_HEIGHT) {
                     _uploadOk    = false;
                     _uploadError = "Invalid .qgif format (bad header)";
@@ -399,6 +400,110 @@ static void handleReboot(AsyncWebServerRequest *request) {
 #else
     (void)0;
 #endif
+}
+
+// ==========================================================================
+//  Handlers -- Wireless OTA (Cloud Auto-OTA & Browser Local .bin Upload)
+// ==========================================================================
+
+static bool   _otaUploadOk = false;
+static String _otaUploadError;
+
+static void handleGetOtaStatus(AsyncWebServerRequest *request) {
+    StaticJsonDocument<256> doc;
+    doc["in_progress"]      = (bool)otaInProgress;
+    doc["progress"]         = (int)otaProgressPercent;
+    doc["status"]           = String((const char *)otaStatusMsg);
+    doc["update_available"] = (bool)updateAvailable;
+    doc["latest_version"]   = String(updateAvailableVersion);
+    String json;
+    serializeJson(doc, json);
+    request->send(200, "application/json", json);
+}
+
+static void handlePostOtaCloud(AsyncWebServerRequest *request) {
+    if (otaInProgress) {
+        request->send(409, "application/json", "{\"ok\":false,\"error\":\"OTA already in progress\"}");
+        return;
+    }
+    otaInProgress      = true;
+    otaProgressPercent = 0;
+    strncpy(otaStatusMsg, "Starting Cloud OTA...", sizeof(otaStatusMsg) - 1);
+    otaCloudRequested  = true;
+    request->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void handleOtaUploadDone(AsyncWebServerRequest *request) {
+    if (_otaUploadOk) {
+        request->send(200, "application/json", "{\"ok\":true,\"rebooting\":true}");
+        otaRebootRequested = true;
+    } else {
+        StaticJsonDocument<256> doc;
+        doc["ok"]    = false;
+        doc["error"] = _otaUploadError.length() ? _otaUploadError : "Firmware update failed";
+        String json;
+        serializeJson(doc, json);
+        request->send(400, "application/json", json);
+    }
+}
+
+static void handleOtaUploadData(AsyncWebServerRequest *request,
+                                const String &filename, size_t index,
+                                uint8_t *data, size_t len, bool final) {
+    if (index == 0) {
+        _otaUploadOk    = true;
+        _otaUploadError = "";
+        if (!filename.endsWith(".bin")) {
+            _otaUploadOk    = false;
+            _otaUploadError = "Only .bin firmware files are accepted";
+            return;
+        }
+        otaInProgress      = true;
+        otaProgressPercent = 0;
+        strncpy(otaStatusMsg, "Uploading firmware...", sizeof(otaStatusMsg) - 1);
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
+            _otaUploadOk    = false;
+            _otaUploadError = "Update.begin failed";
+            strncpy(otaStatusMsg, "OTA init failed", sizeof(otaStatusMsg) - 1);
+            otaInProgress = false;
+            return;
+        }
+    }
+
+    if (_otaUploadOk && len > 0) {
+        if (Update.write(data, len) != len) {
+            _otaUploadOk    = false;
+            _otaUploadError = "Flash write failed";
+            Update.abort();
+            strncpy(otaStatusMsg, "Write failed!", sizeof(otaStatusMsg) - 1);
+            otaInProgress = false;
+            return;
+        }
+        size_t total = request->contentLength();
+        if (total > 0) {
+            int pct = (int)(((index + len) * 100ULL) / total);
+            if (pct > 99) pct = 99;
+            otaProgressPercent = pct;
+        }
+    }
+
+    if (final) {
+        if (_otaUploadOk) {
+            if (Update.end(true) && Update.isFinished()) {
+                otaProgressPercent = 100;
+                strncpy(otaStatusMsg, "Success! Rebooting", sizeof(otaStatusMsg) - 1);
+            } else {
+                _otaUploadOk    = false;
+                _otaUploadError = "Firmware verification failed";
+                Update.abort();
+                strncpy(otaStatusMsg, "Verify failed!", sizeof(otaStatusMsg) - 1);
+                otaInProgress = false;
+            }
+        } else {
+            Update.abort();
+            otaInProgress = false;
+        }
+    }
 }
 
 // ==========================================================================
@@ -935,6 +1040,9 @@ void webDashboardInit(AsyncWebServer &server) {
     server.on("/api/weather",       HTTP_POST, handlePostWeather);
     server.on("/api/pinned",        HTTP_GET,  handleGetPinned);
     server.on("/api/pinned",        HTTP_POST, handlePostPinned);
+    server.on("/api/ota/status",    HTTP_GET,  handleGetOtaStatus);
+    server.on("/api/ota/cloud",     HTTP_POST, handlePostOtaCloud);
+    server.on("/api/ota/upload",    HTTP_POST, handleOtaUploadDone, handleOtaUploadData);
 
     // Catch-all: serve .qgif files from LittleFS for browser preview (path-normalized)
     server.onNotFound([](AsyncWebServerRequest *request) {

@@ -1,13 +1,22 @@
 #!/usr/bin/env python3
 """
-gif2qbit.py -- Convert GIF animations to QBIT .qgif binary format.
+gif2qbit.py -- Convert GIF animations to QBIT .qgif binary format (RLE-compressed by default).
 
 Binary format (.qgif):
-  [0]       uint8   frame_count
-  [1..2]    uint16  width   (little-endian)
-  [3..4]    uint16  height  (little-endian)
-  [5..]     uint16  delays[frame_count]  (LE, milliseconds)
-  [..]      uint8   frames[frame_count][1024]  (128x64 monochrome bitmap)
+  Uncompressed (height == 64):
+    [0]       uint8   frame_count
+    [1..2]    uint16  width   (little-endian, 128)
+    [3..4]    uint16  height  (little-endian, 64)
+    [5..]     uint16  delays[frame_count]  (LE, milliseconds)
+    [..]      uint8   frames[frame_count][1024]  (128x64 monochrome bitmap)
+
+  RLE-compressed (height == 64 | 0x8000 == 0x8040):
+    [0]       uint8   frame_count
+    [1..2]    uint16  width   (little-endian, 128)
+    [3..4]    uint16  height  (little-endian, 0x8040)
+    [5..]     uint16  delays[frame_count]  (LE, milliseconds)
+    [..]      uint32  offsets[frame_count + 1]  (LE, byte offsets into RLE stream)
+    [..]      uint8   rle_data[offsets[frame_count]]  (PackBits RLE stream)
 
 Usage:
   python gif2qbit.py input.gif
@@ -15,6 +24,7 @@ Usage:
   python gif2qbit.py *.gif
   python gif2qbit.py /path/to/gifs/
   python gif2qbit.py input.gif --threshold 100 --invert --scale stretch
+  python gif2qbit.py input.gif --uncompressed
 """
 
 import argparse
@@ -31,6 +41,37 @@ except ImportError:
 DISPLAY_WIDTH  = 128
 DISPLAY_HEIGHT = 64
 FRAME_SIZE     = (DISPLAY_WIDTH // 8) * DISPLAY_HEIGHT  # 1024 bytes
+QGIF_RLE_FLAG  = 0x8000
+
+
+def rle_encode(frame: bytes) -> bytes:
+    """RLE encoder matching qgifRleDecode() in firmware/include/gif_types.h."""
+    out = bytearray()
+    n = len(frame)
+    i = 0
+    while i < n:
+        b = frame[i]
+        run_len = 1
+        while i + run_len < n and run_len < 127 and frame[i + run_len] == b:
+            run_len += 1
+        if run_len >= 3:
+            out.append(0x80 | run_len)
+            out.append(b)
+            i += run_len
+        else:
+            lit_start = i
+            lit_len = 0
+            while i < n and lit_len < 127:
+                r = 1
+                while i + r < n and r < 3 and frame[i + r] == frame[i]:
+                    r += 1
+                if r >= 3:
+                    break
+                i += 1
+                lit_len += 1
+            out.append(lit_len)
+            out.extend(frame[lit_start : lit_start + lit_len])
+    return bytes(out)
 
 
 def frame_to_bitmap(gray_img, threshold=128, invert=False):
@@ -92,7 +133,7 @@ def resize_frame(img, scale="fit"):
 
 
 def convert_gif(input_path, output_path=None, threshold=128,
-                invert=False, scale="fit"):
+                invert=False, scale="fit", compress=True):
     """Convert a GIF file to .qgif binary.  Returns True on success."""
     input_path = Path(input_path)
     if output_path is None:
@@ -135,19 +176,37 @@ def convert_gif(input_path, output_path=None, threshold=128,
         delays = delays[:255]
         frame_count = 255
 
+    raw_bytes = 5 + frame_count * 2 + frame_count * FRAME_SIZE
+
     # --- Write .qgif binary ---
     with open(output_path, "wb") as f:
         f.write(struct.pack("<B", frame_count))
         f.write(struct.pack("<H", DISPLAY_WIDTH))
-        f.write(struct.pack("<H", DISPLAY_HEIGHT))
-        for d in delays:
-            f.write(struct.pack("<H", d))
-        for bitmap in frames:
-            f.write(bitmap)
+        if compress:
+            f.write(struct.pack("<H", DISPLAY_HEIGHT | QGIF_RLE_FLAG))
+            for d in delays:
+                f.write(struct.pack("<H", d))
+            offsets = [0]
+            blob = bytearray()
+            for bitmap in frames:
+                comp = rle_encode(bitmap)
+                blob.extend(comp)
+                offsets.append(len(blob))
+            for off in offsets:
+                f.write(struct.pack("<I", off))
+            f.write(blob)
+        else:
+            f.write(struct.pack("<H", DISPLAY_HEIGHT))
+            for d in delays:
+                f.write(struct.pack("<H", d))
+            for bitmap in frames:
+                f.write(bitmap)
 
-    total_kb = (5 + frame_count * 2 + frame_count * FRAME_SIZE) / 1024
+    written_bytes = output_path.stat().st_size
+    total_kb = written_bytes / 1024
+    mode_str = f"RLE {written_bytes * 100 / raw_bytes:.0f}%" if compress else "raw"
     print(f"  {input_path.name}  ->  {output_path.name}  "
-          f"({frame_count} frames, {total_kb:.1f} KB)")
+          f"({frame_count} frames, {total_kb:.1f} KB, {mode_str})")
     return True
 
 
@@ -166,6 +225,8 @@ def main():
                         choices=["fit", "stretch", "fit_width", "fit_height"],
                         default="fit",
                         help="Scale mode (default: fit)")
+    parser.add_argument("--uncompressed", action="store_true",
+                        help="Write legacy uncompressed .qgif (larger file size)")
     args = parser.parse_args()
 
     # Collect input files
@@ -189,7 +250,8 @@ def main():
 
     print(f"Converting {len(files)} file(s)...\n")
     ok = sum(
-        convert_gif(f, args.output, args.threshold, args.invert, args.scale)
+        convert_gif(f, args.output, args.threshold, args.invert, args.scale,
+                    compress=not args.uncompressed)
         for f in files
     )
     print(f"\nDone: {ok}/{len(files)} converted successfully.")

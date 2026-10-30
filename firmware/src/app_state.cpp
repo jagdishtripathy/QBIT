@@ -21,3 +21,9 @@ const char *kQbitVersion = (QBIT_VERSION[0] != '\0')
 
 volatile bool updateAvailable = false;
 char         updateAvailableVersion[UPDATE_AVAILABLE_VERSION_LEN] = "";
+
+volatile bool otaInProgress      = false;
+volatile int  otaProgressPercent = 0;
+char          otaStatusMsg[32]   = "Idle";
+volatile bool otaCloudRequested  = false;
+volatile bool otaRebootRequested = false;

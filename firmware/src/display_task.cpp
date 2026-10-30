@@ -22,7 +22,6 @@
 
 #include "gif_types.h"
 #include "sys_scx.h"
-#include "sys_idle.h"
 
 #include <NonBlockingRtttl.h>
 #include <WiFi.h>
@@ -210,16 +209,17 @@ static void drawSettingsMenu() {
         return;
     }
 
-    // SETTINGS_OPTIONS: 5 items (QBIT Sound, GIF Invert, Flip Mode, Clock Format, [ SAVE ]). DBL = back.
-    static const char *labels[5] = {
+    // SETTINGS_OPTIONS: 6 items (QBIT Sound, GIF Invert, Flip Mode, Clock Format, [ SAVE ], [ CLOUD UPDATE ]). DBL = back.
+    static const char *labels[6] = {
         "QBIT Sound", "GIF Invert", "Flip Mode", "Clock Format",
-        "[ SAVE ]"
+        "[ SAVE ]", "[ CLOUD UPDATE ]"
     };
-    bool vals[5] = {
+    bool vals[6] = {
         _settingsPending.gifSound,
         _settingsPending.negativeGif,
         _settingsPending.flipMode,
         _settingsPending.timeFormat24h,
+        false,
         false
     };
 
@@ -231,7 +231,7 @@ static void drawSettingsMenu() {
 
     for (uint8_t row = 0; row < 4; row++) {
         uint8_t item = top + row;
-        if (item >= 5) break;
+        if (item >= 6) break;
 
         uint8_t y = (row + 1) * 15;
         bool isSelected = (item == _settingsCursor);
@@ -393,7 +393,7 @@ static void playBootAnimation() {
             rtttl::play();
         }
 
-        memcpy_P(frameBuf, sys_scx_gif.frames[f], QGIF_FRAME_SIZE);
+        gifDecodeProgmemFrame(frameBuf, &sys_scx_gif, f);
         gifRenderFrame(&u8g2, frameBuf, sys_scx_gif.width, sys_scx_gif.height);
 
         uint16_t d = sys_scx_gif.delays[f] / BOOT_GIF_SPEED;
@@ -496,6 +496,30 @@ void displayTask(void *param) {
     for (;;) {
         unsigned long now = millis();
         unsigned long elapsed = now - _stateEntryMs;
+
+        // --- Wireless OTA progress screen (overrides normal display while active) ---
+        if (otaInProgress) {
+            static unsigned long lastOtaDrawMs = 0;
+            if (now - lastOtaDrawMs >= 100) {
+                lastOtaDrawMs = now;
+                int pct = otaProgressPercent;
+                if (pct < 0) pct = 0;
+                if (pct > 100) pct = 100;
+                char pctLine[24];
+                snprintf(pctLine, sizeof(pctLine), "Progress: %d%%", pct);
+                char bar[WIFI_AP_PROGRESS_LEN + 4];
+                unsigned int filled = (unsigned int)((pct * WIFI_AP_PROGRESS_LEN) / 100);
+                bar[0] = '[';
+                for (unsigned int i = 0; i < WIFI_AP_PROGRESS_LEN; i++) {
+                    bar[i + 1] = (i < filled) ? '#' : '.';
+                }
+                bar[WIFI_AP_PROGRESS_LEN + 1] = ']';
+                bar[WIFI_AP_PROGRESS_LEN + 2] = '\0';
+                showText("[ Wireless OTA ]", otaStatusMsg, pctLine, bar);
+            }
+            vTaskDelay(pdMS_TO_TICKS(20));
+            continue;
+        }
 
         // --- Advance melody ---
         if (rtttl::isPlaying()) {
@@ -942,7 +966,7 @@ void displayTask(void *param) {
                         }
                     } else {
                         if (gesture.type == SINGLE_TAP) {
-                            _settingsCursor = (_settingsCursor + 1) % 5;
+                            _settingsCursor = (_settingsCursor + 1) % 6;
                             drawSettingsMenu();
                         } else if (gesture.type == DOUBLE_TAP) {
                             _settingsCursor = 0;
@@ -955,6 +979,12 @@ void displayTask(void *param) {
                                          "",
                                          "TAP  = confirm",
                                          "HOLD = cancel");
+                            } else if (_settingsCursor == 5) {
+                                otaInProgress = true;
+                                otaProgressPercent = 0;
+                                strncpy(otaStatusMsg, "Starting Cloud OTA...", sizeof(otaStatusMsg) - 1);
+                                otaCloudRequested = true;
+                                enterState(GIF_PLAYBACK);
                             } else {
                                 _settingsSelected = true;
                                 drawSettingsMenu();

@@ -158,4 +158,13 @@ extern const char *kQbitVersion;
 extern volatile bool    updateAvailable;
 extern char             updateAvailableVersion[UPDATE_AVAILABLE_VERSION_LEN];
 
+// ==========================================================================
+//  Wireless OTA state (Cloud Auto-OTA & Browser Local OTA)
+// ==========================================================================
+extern volatile bool    otaInProgress;
+extern volatile int     otaProgressPercent;
+extern char             otaStatusMsg[32];
+extern volatile bool    otaCloudRequested;
+extern volatile bool    otaRebootRequested;
+
 #endif // APP_STATE_H

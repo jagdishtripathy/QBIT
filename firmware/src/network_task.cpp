@@ -11,6 +11,7 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <Update.h>
 #include <NetWizard.h>
 #include <ESPmDNS.h>
 #include <ArduinoJson.h>
@@ -446,6 +447,9 @@ static void wsMessage(WebsocketsClient &client, WebsocketsMessage message) {
 #ifndef VERSION_CHECK_URL
 #define VERSION_CHECK_URL "https://jagdishtripathy.github.io/QBIT/latest.json"
 #endif
+#ifndef CLOUD_OTA_FIRMWARE_URL
+#define CLOUD_OTA_FIRMWARE_URL "https://jagdishtripathy.github.io/QBIT/firmware.bin"
+#endif
 #define VERSION_CHECK_TIMEOUT_MS 45000  // HTTPClient uses ms (compare with millis())
 #define VERSION_RECHECK_INTERVAL_MS (6UL * 60UL * 60UL * 1000UL)  // periodic check while WiFi up
 
@@ -516,6 +520,111 @@ static void checkFirmwareVersion() {
         updateAvailable        = false;
         updateAvailableVersion[0] = '\0';
         Serial.printf("[Version] Up to date: %s (remote: %s)\n", kQbitVersion, remoteVer);
+    }
+}
+
+// ==========================================================================
+//  Wireless Cloud Auto-OTA (HTTPS stream from GitHub Pages into inactive slot)
+// ==========================================================================
+static void performCloudOta() {
+    if (WiFi.status() != WL_CONNECTED) {
+        strncpy(otaStatusMsg, "No Wi-Fi connection", sizeof(otaStatusMsg) - 1);
+        vTaskDelay(pdMS_TO_TICKS(2500));
+        otaInProgress = false;
+        return;
+    }
+
+    otaInProgress      = true;
+    otaProgressPercent = 0;
+    strncpy(otaStatusMsg, "Connecting to cloud...", sizeof(otaStatusMsg) - 1);
+    Serial.println("[OTA] Starting Cloud OTA from " CLOUD_OTA_FIRMWARE_URL);
+
+    // Disconnect WebSocket & MQTT during OTA to free heap and TLS memory
+    if (_wsClient.available()) _wsClient.close();
+    if (_mqttClient.connected()) _mqttClient.disconnect();
+
+    WiFiClientSecure client;
+    client.setInsecure();
+    client.setTimeout(30);
+
+    HTTPClient http;
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    http.setTimeout(30000);
+    if (!http.begin(client, CLOUD_OTA_FIRMWARE_URL)) {
+        strncpy(otaStatusMsg, "Connect failed", sizeof(otaStatusMsg) - 1);
+        vTaskDelay(pdMS_TO_TICKS(3000));
+        otaInProgress = false;
+        return;
+    }
+
+    int code = http.GET();
+    if (code != HTTP_CODE_OK) {
+        snprintf(otaStatusMsg, sizeof(otaStatusMsg), "HTTP error %d", code);
+        http.end();
+        vTaskDelay(pdMS_TO_TICKS(3000));
+        otaInProgress = false;
+        return;
+    }
+
+    int totalLen = http.getSize();
+    size_t updateSize = (totalLen > 0) ? (size_t)totalLen : UPDATE_SIZE_UNKNOWN;
+    strncpy(otaStatusMsg, "Erasing & flashing...", sizeof(otaStatusMsg) - 1);
+    if (!Update.begin(updateSize, U_FLASH)) {
+        strncpy(otaStatusMsg, "OTA begin failed", sizeof(otaStatusMsg) - 1);
+        http.end();
+        vTaskDelay(pdMS_TO_TICKS(3000));
+        otaInProgress = false;
+        return;
+    }
+
+    WiFiClient *stream = http.getStreamPtr();
+    uint8_t buf[1024];
+    size_t written = 0;
+    unsigned long lastDataMs = millis();
+    bool writeErr = false;
+
+    strncpy(otaStatusMsg, "Downloading...", sizeof(otaStatusMsg) - 1);
+    while (http.connected() && (totalLen <= 0 || (int)written < totalLen)) {
+        size_t avail = stream->available();
+        if (avail > 0) {
+            size_t toRead = (avail > sizeof(buf)) ? sizeof(buf) : avail;
+            int r = stream->readBytes(buf, toRead);
+            if (r > 0) {
+                if (Update.write(buf, (size_t)r) != (size_t)r) {
+                    writeErr = true;
+                    break;
+                }
+                written += (size_t)r;
+                lastDataMs = millis();
+                if (totalLen > 0) {
+                    int pct = (int)((written * 100ULL) / (size_t)totalLen);
+                    if (pct > 99) pct = 99;
+                    otaProgressPercent = pct;
+                }
+            }
+        } else {
+            if (millis() - lastDataMs > 20000) {
+                writeErr = true;
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+        vTaskDelay(pdMS_TO_TICKS(1));
+    }
+    http.end();
+
+    if (!writeErr && Update.end(true) && Update.isFinished()) {
+        otaProgressPercent = 100;
+        strncpy(otaStatusMsg, "Success! Rebooting", sizeof(otaStatusMsg) - 1);
+        Serial.println("[OTA] Cloud OTA complete, rebooting...");
+        vTaskDelay(pdMS_TO_TICKS(1500));
+        esp_restart();
+    } else {
+        Update.abort();
+        strncpy(otaStatusMsg, "Update failed!", sizeof(otaStatusMsg) - 1);
+        Serial.printf("[OTA] Cloud OTA failed (err=%u)\n", (unsigned)Update.getError());
+        vTaskDelay(pdMS_TO_TICKS(3500));
+        otaInProgress = false;
     }
 }
 
@@ -923,6 +1032,19 @@ void networkTask(void *param) {
                 _versionCheckAfterMs = millis() + VERSION_RECHECK_INTERVAL_MS;
             else
                 _versionCheckAfterMs = 0;
+        }
+
+        // --- Wireless Cloud Auto-OTA request ---
+        if (otaCloudRequested) {
+            otaCloudRequested = false;
+            performCloudOta();
+        }
+
+        // --- Deferred reboot after Browser Local OTA upload ---
+        if (otaRebootRequested) {
+            otaRebootRequested = false;
+            vTaskDelay(pdMS_TO_TICKS(1200));
+            esp_restart();
         }
 
         vTaskDelay(pdMS_TO_TICKS(10));

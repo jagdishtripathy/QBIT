@@ -23,6 +23,7 @@ static uint8_t       _frameBuf[QGIF_FRAME_SIZE];
 static uint8_t       _currentFrame  = 0;
 static unsigned long _lastFrameMs   = 0;
 static uint32_t      _dataOffset    = 0;   // byte offset to first frame in file
+static bool          _isRle         = false;
 static String        _currentFile;
 static String        _requestedFile;
 static bool          _fileChanged   = false;
@@ -69,9 +70,11 @@ static bool _openFile(const String &filename) {
     return false;
   }
 
-  _frameCount = hdr[0];
-  _width      = hdr[1] | ((uint16_t)hdr[2] << 8);
-  _height     = hdr[3] | ((uint16_t)hdr[4] << 8);
+  _frameCount   = hdr[0];
+  _width        = hdr[1] | ((uint16_t)hdr[2] << 8);
+  uint16_t rawH = hdr[3] | ((uint16_t)hdr[4] << 8);
+  _isRle        = (rawH & QGIF_RLE_FLAG) != 0;
+  _height       = rawH & ~QGIF_RLE_FLAG;
 
   if (_frameCount == 0 || _width != QGIF_FRAME_WIDTH ||
       _height != QGIF_FRAME_HEIGHT) {
@@ -92,7 +95,11 @@ static bool _openFile(const String &filename) {
     _delays[i] = delayBuf[i * 2] | ((uint16_t)delayBuf[i * 2 + 1] << 8);
   }
 
-  _dataOffset   = QGIF_HEADER_SIZE + delayBytes;
+  if (_isRle) {
+    _dataOffset = QGIF_HEADER_SIZE + delayBytes + (uint32_t)(_frameCount + 1) * 4;
+  } else {
+    _dataOffset = QGIF_HEADER_SIZE + delayBytes;
+  }
   _currentFrame = 0;
   _lastFrameMs  = 0;  // render first frame immediately
   _loopCount    = 0;
@@ -101,11 +108,30 @@ static bool _openFile(const String &filename) {
   return true;
 }
 
-// Read one frame into _frameBuf by seeking to its offset.
+// Read one frame into _frameBuf by seeking to its offset (supports raw or RLE).
 static bool _readFrame(uint8_t idx) {
-  uint32_t off = _dataOffset + (uint32_t)idx * QGIF_FRAME_SIZE;
-  if (!_file.seek(off)) return false;
-  return _file.read(_frameBuf, QGIF_FRAME_SIZE) == QGIF_FRAME_SIZE;
+  if (!_isRle) {
+    uint32_t off = _dataOffset + (uint32_t)idx * QGIF_FRAME_SIZE;
+    if (!_file.seek(off)) return false;
+    return _file.read(_frameBuf, QGIF_FRAME_SIZE) == QGIF_FRAME_SIZE;
+  }
+
+  uint32_t offTablePos = QGIF_HEADER_SIZE + (uint32_t)_frameCount * 2 + (uint32_t)idx * 4;
+  if (!_file.seek(offTablePos)) return false;
+  uint8_t offBuf[8];
+  if (_file.read(offBuf, 8) != 8) return false;
+  uint32_t startOff = (uint32_t)offBuf[0] | ((uint32_t)offBuf[1] << 8) |
+                      ((uint32_t)offBuf[2] << 16) | ((uint32_t)offBuf[3] << 24);
+  uint32_t endOff   = (uint32_t)offBuf[4] | ((uint32_t)offBuf[5] << 8) |
+                      ((uint32_t)offBuf[6] << 16) | ((uint32_t)offBuf[7] << 24);
+  if (endOff < startOff || (endOff - startOff) > QGIF_FRAME_SIZE + 64) return false;
+  uint16_t compLen = (uint16_t)(endOff - startOff);
+
+  if (!_file.seek(_dataOffset + startOff)) return false;
+  uint8_t compBuf[QGIF_FRAME_SIZE + 64];
+  if (_file.read(compBuf, compLen) != compLen) return false;
+
+  return qgifRleDecode(compBuf, compLen, _frameBuf, QGIF_FRAME_SIZE) == QGIF_FRAME_SIZE;
 }
 
 // ---------------------------------------------------------------------------
@@ -311,7 +337,7 @@ void gifPlayerTick() {
       if (delayMs < 1) delayMs = 1;
       if (millis() - _idleLastFrameMs < delayMs) return;
 
-      memcpy_P(_idleFrameBuf, _idleAnim->frames[_idleFrame], QGIF_FRAME_SIZE);
+      gifDecodeProgmemFrame(_idleFrameBuf, _idleAnim, _idleFrame);
       gifRenderFrame(_display, _idleFrameBuf, _idleAnim->width, _idleAnim->height);
 
       _idleLastFrameMs = millis();
