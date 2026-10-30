@@ -216,6 +216,53 @@
     <button class="btn btn-save" id="btnSave">Save</button>
   </div>
 
+  <div class="card collapsible collapsed" id="pinnedCard">
+    <div class="card-title card-title-row">
+      <span class="card-title-text">Pinned Display</span>
+      <span class="pill pill-status" id="pinnedStatusPill">OFF</span>
+    </div>
+    <div class="setting">
+      <label class="setting-label">Mode</label>
+      <select id="pinnedMode" class="input-select">
+        <option value="0">Normal (Robot Emotions)</option>
+        <option value="1">Pinned Animation (.qgif)</option>
+        <option value="2">Custom Text Banner</option>
+      </select>
+    </div>
+    <div class="setting" id="pinnedGifRow">
+      <label class="setting-label">Animation</label>
+      <select id="pinnedGifSelect" class="input-select">
+        <option value="">(Select a file)</option>
+      </select>
+    </div>
+    <div class="setting" id="pinnedTextRow" style="display:none">
+      <label class="setting-label">Text</label>
+      <input type="text" id="pinnedTextInput" class="input-text" maxlength="64" placeholder="Enter banner text (e.g. My Name)">
+    </div>
+    <div class="setting">
+      <label class="setting-label">Duration</label>
+      <select id="pinnedDuration" class="input-select">
+        <option value="0">Until Touched (Infinite)</option>
+        <option value="1800">30 Minutes</option>
+        <option value="3600">1 Hour</option>
+        <option value="21600">6 Hours</option>
+        <option value="43200">12 Hours</option>
+        <option value="86400">1 Day</option>
+        <option value="259200">3 Days</option>
+        <option value="604800">7 Days</option>
+      </select>
+    </div>
+    <div class="setting" id="pinnedTimerRow" style="display:none">
+      <label class="setting-label">Remaining</label>
+      <span class="setting-val-wide" id="pinnedRemaining">--</span>
+    </div>
+    <div class="device-actions">
+      <button class="btn btn-save" id="btnPinnedApply">Apply Pin</button>
+      <button class="btn btn-secondary" id="btnPinnedCancel">Unpin / Stop</button>
+    </div>
+    <div class="msg" id="pinnedMsg"></div>
+  </div>
+
   <div class="card collapsible collapsed">
     <div class="card-title">Weather</div>
     <div class="setting">

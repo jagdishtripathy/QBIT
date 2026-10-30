@@ -405,6 +405,58 @@ static void playBootAnimation() {
 }
 
 // ==========================================================================
+//  Pinned Text Banner renderer
+// ==========================================================================
+
+static void renderPinnedTextBanner() {
+    static unsigned long lastRenderMs = 0;
+    static int16_t scrollX = 128;
+    static String lastTarget = "";
+
+    unsigned long now = millis();
+    String text = getPinnedTarget();
+    if (text.length() == 0) text = "QBIT";
+
+    if (text != lastTarget) {
+        lastTarget = text;
+        scrollX = 128;
+    }
+
+    u8g2.setFont(u8g2_font_7x14B_tr);
+    int16_t textWidth = (int16_t)u8g2.getStrWidth(text.c_str());
+
+    if (textWidth <= 120) {
+        // Short text: Static centered display, update once every 500ms
+        if (now - lastRenderMs < 500) return;
+        lastRenderMs = now;
+
+        u8g2.clearBuffer();
+        int16_t x = (128 - textWidth) / 2;
+        if (x < 0) x = 0;
+        u8g2.drawRFrame(2, 2, 124, 60, 4);
+        u8g2.drawStr((uint8_t)x, 37, text.c_str());
+        rotateBuffer180();
+        u8g2.sendBuffer();
+    } else {
+        // Long text: Smooth marquee scroll, update every 35ms (~28fps)
+        if (now - lastRenderMs < 35) return;
+        lastRenderMs = now;
+
+        u8g2.clearBuffer();
+        u8g2.drawHLine(0, 16, 128);
+        u8g2.drawHLine(0, 48, 128);
+        u8g2.drawStr(scrollX, 36, text.c_str());
+        rotateBuffer180();
+        u8g2.sendBuffer();
+
+        scrollX -= 2;
+        if (scrollX < -textWidth) {
+            scrollX = 128;
+        }
+    }
+}
+
+// ==========================================================================
 //  Display task main loop
 // ==========================================================================
 
@@ -579,7 +631,25 @@ void displayTask(void *param) {
 
                 case NetworkEvent::CAM_STOP:
                     if (_state == CAM_VIEW) {
-                        enterState(GIF_PLAYBACK);
+                        enterState(getPinnedMode() != 0 ? PINNED_DISPLAY : GIF_PLAYBACK);
+                    }
+                    break;
+
+                case NetworkEvent::PINNED_UPDATE:
+                    if (getPinnedMode() != 0) {
+                        if (getPinnedMode() == 1) {
+                            gifPlayerSetAutoAdvance(0);
+                            gifPlayerSetFile(getPinnedTarget());
+                        }
+                        enterState(PINNED_DISPLAY);
+                    } else {
+                        gifPlayerSetAutoAdvance(1);
+                        if (_state == PINNED_DISPLAY) {
+                            enterState(GIF_PLAYBACK);
+                            if (gifPlayerHasFiles()) {
+                                gifPlayerSetFile(gifPlayerNextShuffle());
+                            }
+                        }
                     }
                     break;
             }
@@ -673,6 +743,74 @@ void displayTask(void *param) {
                     }
                     break;
 
+                case PINNED_DISPLAY:
+                    switch (gesture.type) {
+                        case TOUCH_DOWN:
+                            if (getBuzzerVolume() > 0) {
+                                noTone(getPinBuzzer());
+                                rtttl::begin(getPinBuzzer(), TOUCH_MELODY);
+                            }
+                            break;
+                        case SINGLE_TAP:
+                            // Single tap dismisses pinned display and immediately returns to robot companion mode
+                            setPinnedMode(0);
+                            saveSettings();
+                            gifPlayerSetAutoAdvance(1);
+                            enterState(GIF_PLAYBACK);
+                            if (gifPlayerHasFiles()) {
+                                String next = gifPlayerNextShuffle();
+                                if (next.length() > 0) {
+                                    gifPlayerSetFile(next);
+                                    mqttPublishAnimationState(next);
+                                }
+                            }
+                            break;
+                        case DOUBLE_TAP:
+                            enterState(HISTORY_TIME);
+                            {
+                                String timeStr = timeManagerGetFormatted();
+                                String dateStr = timeManagerGetDateFormatted();
+                                u8g2.clearBuffer();
+                                String timePart = timeStr;
+                                String ampmPart;
+                                if (!getTimeFormat24h()) {
+                                    int sp = timeStr.indexOf(" AM");
+                                    if (sp < 0) sp = timeStr.indexOf(" PM");
+                                    if (sp < 0) { sp = timeStr.indexOf("AM"); if (sp < 0) sp = timeStr.indexOf("PM"); }
+                                    if (sp >= 0) {
+                                        timePart = timeStr.substring(0, sp);
+                                        ampmPart = timeStr.substring(sp);
+                                    }
+                                }
+                                u8g2.setFont(u8g2_font_logisoso28_tn);
+                                int16_t tw = (int16_t)u8g2.getStrWidth(timePart.c_str());
+                                int16_t tx = (128 - tw) / 2;
+                                if (tx < 0) tx = 0;
+                                u8g2.drawStr((uint8_t)tx, 38, timePart.c_str());
+                                u8g2.setFont(u8g2_font_6x13_tr);
+                                uint8_t dw = u8g2.getStrWidth(dateStr.c_str());
+                                if (ampmPart.length() > 0) {
+                                    uint8_t aw = u8g2.getStrWidth(ampmPart.c_str());
+                                    int16_t line2W = (int16_t)dw + 4 + (int16_t)aw;
+                                    int16_t line2X = (128 - line2W) / 2;
+                                    if (line2X < 0) line2X = 0;
+                                    u8g2.drawStr((uint8_t)line2X, 58, dateStr.c_str());
+                                    u8g2.drawStr((uint8_t)(line2X + dw + 4), 58, ampmPart.c_str());
+                                } else {
+                                    u8g2.drawStr((128 - dw) / 2, 58, dateStr.c_str());
+                                }
+                                rotateBuffer180();
+                                u8g2.sendBuffer();
+                            }
+                            break;
+                        case LONG_PRESS:
+                            enterSettingsMenu();
+                            break;
+                        default:
+                            break;
+                    }
+                    break;
+
                 case POKE_DISPLAY:
                     if (gesture.type == SINGLE_TAP) {
                         pokeSetActive(false);
@@ -706,7 +844,7 @@ void displayTask(void *param) {
                         enterState(HISTORY_POKE);
                         showPokeHistoryEntry(0);
                     } else if (gesture.type == DOUBLE_TAP) {
-                        enterState(GIF_PLAYBACK);
+                        enterState(getPinnedMode() != 0 ? PINNED_DISPLAY : GIF_PLAYBACK);
                     } else if (gesture.type == LONG_PRESS) {
                         enterSettingsMenu();
                     }
@@ -1062,14 +1200,36 @@ void displayTask(void *param) {
 
             case CONNECTED_INFO:
                 if (elapsed >= CONNECTED_INFO_MS) {
-                    enterState(GIF_PLAYBACK);
-                    if (gifPlayerHasFiles()) {
-                        gifPlayerBuildShuffleBag();
-                        gifPlayerSetAutoAdvance(1);
-                        gifPlayerSetFile(gifPlayerNextShuffle());
+                    if (getPinnedMode() != 0) {
+                        // Check if expired while powered off
+                        if (getPinnedDuration() > 0 && getPinnedRemainingSeconds() == 0) {
+                            setPinnedMode(0);
+                            saveSettings();
+                            enterState(GIF_PLAYBACK);
+                            if (gifPlayerHasFiles()) {
+                                gifPlayerBuildShuffleBag();
+                                gifPlayerSetAutoAdvance(1);
+                                gifPlayerSetFile(gifPlayerNextShuffle());
+                            } else {
+                                gifPlayerStartIdleIfNoUserGifs();
+                            }
+                        } else {
+                            if (getPinnedMode() == 1) {
+                                gifPlayerSetAutoAdvance(0);
+                                gifPlayerSetFile(getPinnedTarget());
+                            }
+                            enterState(PINNED_DISPLAY);
+                        }
                     } else {
-                        // Without .qgif files, gifPlayerTick would not draw (_playing false, idle off).
-                        gifPlayerStartIdleIfNoUserGifs();
+                        enterState(GIF_PLAYBACK);
+                        if (gifPlayerHasFiles()) {
+                            gifPlayerBuildShuffleBag();
+                            gifPlayerSetAutoAdvance(1);
+                            gifPlayerSetFile(gifPlayerNextShuffle());
+                        } else {
+                            // Without .qgif files, gifPlayerTick would not draw (_playing false, idle off).
+                            gifPlayerStartIdleIfNoUserGifs();
+                        }
                     }
                 }
                 break;
@@ -1166,7 +1326,7 @@ void displayTask(void *param) {
 
             case HISTORY_TIME:
                 if (elapsed >= HISTORY_IDLE_MS) {
-                    enterState(GIF_PLAYBACK);
+                    enterState(getPinnedMode() != 0 ? PINNED_DISPLAY : GIF_PLAYBACK);
                 }
                 break;
 
@@ -1358,6 +1518,36 @@ void displayTask(void *param) {
                     gifRenderFrame(&u8g2, _camRenderBuf, QGIF_FRAME_WIDTH, QGIF_FRAME_HEIGHT);
                 }
                 break;
+
+            case PINNED_DISPLAY: {
+                // Check if duration expired
+                if (getPinnedDuration() > 0 && getPinnedRemainingSeconds() == 0) {
+                    setPinnedMode(0);
+                    saveSettings();
+                    gifPlayerSetAutoAdvance(1);
+                    enterState(GIF_PLAYBACK);
+                    if (gifPlayerHasFiles()) {
+                        gifPlayerSetFile(gifPlayerNextShuffle());
+                    }
+                    break;
+                }
+
+                uint8_t mode = getPinnedMode();
+                if (mode == 1) {
+                    // Pinned GIF: loops without random shuffle or idle emotions
+                    gifPlayerTick();
+                } else if (mode == 2) {
+                    // Pinned Text Banner
+                    renderPinnedTextBanner();
+                } else {
+                    gifPlayerSetAutoAdvance(1);
+                    enterState(GIF_PLAYBACK);
+                    if (gifPlayerHasFiles()) {
+                        gifPlayerSetFile(gifPlayerNextShuffle());
+                    }
+                }
+                break;
+            }
 
             default:
                 break;

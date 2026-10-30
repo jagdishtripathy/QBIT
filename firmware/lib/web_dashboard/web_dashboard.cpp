@@ -3,6 +3,7 @@
 #include "../../src/settings.h"
 #include "../../src/app_state.h"
 #include "../../src/network_task.h"
+#include "../../src/time_manager.h"
 #include <LittleFS.h>
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
@@ -61,6 +62,15 @@ static String normalizeQgifPath(const String &url) {
 // ==========================================================================
 //  Helpers
 // ==========================================================================
+
+// Returns request parameter from URL query first, then POST body.
+static bool getParamValue(AsyncWebServerRequest *request, const char *name, String &out) {
+    const AsyncWebParameter *p = request->getParam(name, false);
+    if (!p) p = request->getParam(name, true);
+    if (!p) return false;
+    out = p->value();
+    return true;
+}
 
 // Serve a file from LittleFS with the given content type.
 static void serveFile(AsyncWebServerRequest *request,
@@ -574,6 +584,73 @@ static void handlePostTimezone(AsyncWebServerRequest *request) {
 }
 
 // ==========================================================================
+//  Handlers -- Pinned Display API
+// ==========================================================================
+
+static void handleGetPinned(AsyncWebServerRequest *request) {
+    StaticJsonDocument<256> doc;
+    doc["active"]      = (getPinnedMode() != 0);
+    doc["mode"]        = getPinnedMode();
+    doc["target"]      = getPinnedTarget();
+    doc["duration"]    = getPinnedDuration();
+    doc["remaining"]   = getPinnedRemainingSeconds();
+    String json;
+    serializeJson(doc, json);
+    request->send(200, "application/json", json);
+}
+
+static void handlePostPinned(AsyncWebServerRequest *request) {
+    uint8_t mode = 0;
+    String target = "";
+    uint32_t duration = 0;
+
+    String val;
+    if (getParamValue(request, "mode", val)) {
+        mode = (uint8_t)val.toInt();
+    }
+    if (getParamValue(request, "target", val)) {
+        target = val;
+        target.trim();
+    }
+    if (getParamValue(request, "duration", val)) {
+        duration = (uint32_t)val.toInt();
+    }
+
+    if (mode > 2) mode = 0;
+
+    if (mode == 1) {
+        if (target.startsWith("/")) target = target.substring(1);
+        // GIF target: sanitize basename
+        target = sanitizeFileBasename(target);
+        if (!target.endsWith(".qgif") || !LittleFS.exists("/" + target)) {
+            request->send(400, "application/json", "{\"error\":\"File not found or invalid .qgif\"}");
+            return;
+        }
+    } else if (mode == 2) {
+        // Text banner: limit length
+        if (target.length() == 0) target = "QBIT";
+        if (target.length() > 64) target = target.substring(0, 64);
+    }
+
+    setPinnedMode(mode);
+    setPinnedTarget(target);
+    setPinnedDuration(duration);
+    uint32_t nowSec = (uint32_t)(timeManagerNow() > 100000 ? timeManagerNow() : (millis() / 1000));
+    setPinnedStartEpoch(nowSec);
+    saveSettings();
+
+    // Signal display task via networkEventQueue
+    if (networkEventQueue) {
+        NetworkEvent evt;
+        memset(&evt, 0, sizeof(evt));
+        evt.kind = NetworkEvent::PINNED_UPDATE;
+        xQueueSend(networkEventQueue, &evt, 0);
+    }
+
+    handleGetPinned(request);
+}
+
+// ==========================================================================
 //  Web Cam WebSocket (/ws_cam)
 // ==========================================================================
 
@@ -700,14 +777,6 @@ static void handleGetWeather(AsyncWebServerRequest *request) {
     request->send(200, "application/json", json);
 }
 
-// Returns request parameter from URL query first, then POST body.
-static bool getParamValue(AsyncWebServerRequest *request, const char *name, String &out) {
-    const AsyncWebParameter *p = request->getParam(name, false);
-    if (!p) p = request->getParam(name, true);
-    if (!p) return false;
-    out = p->value();
-    return true;
-}
 
 // POST /api/weather?lat=&lon=&display_name=&city=&save=1  → updated JSON
 static void handlePostWeather(AsyncWebServerRequest *request) {
@@ -864,6 +933,8 @@ void webDashboardInit(AsyncWebServer &server) {
     server.on("/api/weather/search",HTTP_GET,  handleWeatherSearch);
     server.on("/api/weather",       HTTP_GET,  handleGetWeather);
     server.on("/api/weather",       HTTP_POST, handlePostWeather);
+    server.on("/api/pinned",        HTTP_GET,  handleGetPinned);
+    server.on("/api/pinned",        HTTP_POST, handlePostPinned);
 
     // Catch-all: serve .qgif files from LittleFS for browser preview (path-normalized)
     server.onNotFound([](AsyncWebServerRequest *request) {

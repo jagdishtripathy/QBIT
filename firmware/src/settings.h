@@ -117,4 +117,16 @@ void    setWeatherLocation(float lat, float lon,
 bool getWeatherManual();
 void setWeatherManual(bool manual);
 
+// --- Pinned Display / Banner ---
+// mode: 0 = Off (normal robot), 1 = Pinned GIF, 2 = Pinned Text Banner
+uint8_t  getPinnedMode();
+void     setPinnedMode(uint8_t mode);
+String   getPinnedTarget();
+void     setPinnedTarget(const String &target);
+uint32_t getPinnedDuration();
+void     setPinnedDuration(uint32_t sec);
+uint32_t getPinnedStartEpoch();
+void     setPinnedStartEpoch(uint32_t epoch);
+uint32_t getPinnedRemainingSeconds();
+
 #endif // SETTINGS_H

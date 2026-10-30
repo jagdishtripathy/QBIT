@@ -3,6 +3,7 @@
 // ==========================================================================
 #include "settings.h"
 #include "gif_player.h"
+#include "time_manager.h"
 
 extern void weatherScreenInvalidateCache();
 
@@ -72,6 +73,12 @@ static float   _weatherLat         = kWeatherLatDefault;
 static float   _weatherLon         = kWeatherLonDefault;
 static String  _weatherDisplayName = kWeatherNameDefault;
 static bool    _weatherManual      = false;
+
+// Pinned display / banner
+static uint8_t  _pinnedMode       = 0;
+static String   _pinnedTarget     = "";
+static uint32_t _pinnedDuration   = 0;
+static uint32_t _pinnedStartEpoch = 0;
 
 // ==========================================================================
 //  Time format (24h/12h)
@@ -195,6 +202,12 @@ void loadSettings() {
         _weatherManual = false;
     }
 
+    // Pinned display settings
+    _pinnedMode       = _prefs.getUChar("pinMod",   0);
+    _pinnedTarget     = _prefs.getString("pinTgt",  "");
+    _pinnedDuration   = _prefs.getUInt("pinDur",    0);
+    _pinnedStartEpoch = _prefs.getUInt("pinEpoch",  0);
+
     xSemaphoreGive(_prefsMutex);
 
     // Apply speed
@@ -241,6 +254,11 @@ void saveSettings() {
     _prefs.putFloat("wtLon",     _weatherLon);
     _prefs.putString("wtName",   _weatherDisplayName);
     _prefs.putBool("wtMan",      _weatherManual);
+    // Pinned display
+    _prefs.putUChar("pinMod",    _pinnedMode);
+    _prefs.putString("pinTgt",   _pinnedTarget);
+    _prefs.putUInt("pinDur",     _pinnedDuration);
+    _prefs.putUInt("pinEpoch",   _pinnedStartEpoch);
     xSemaphoreGive(_prefsMutex);
     Serial.println("Settings saved to NVS");
 }
@@ -423,4 +441,69 @@ void setWeatherManual(bool manual) {
         _prefs.putBool("wtMan", _weatherManual);
         xSemaphoreGive(_prefsMutex);
     }
+}
+
+// ==========================================================================
+//  Pinned Display / Banner getters & setters
+// ==========================================================================
+uint8_t getPinnedMode() {
+    return _pinnedMode;
+}
+
+void setPinnedMode(uint8_t mode) {
+    if (_prefsReady && xSemaphoreTake(_prefsMutex, portMAX_DELAY) == pdTRUE) {
+        _pinnedMode = mode;
+        xSemaphoreGive(_prefsMutex);
+    } else {
+        _pinnedMode = mode;
+    }
+}
+
+String getPinnedTarget() {
+    return _pinnedTarget;
+}
+
+void setPinnedTarget(const String &target) {
+    if (_prefsReady && xSemaphoreTake(_prefsMutex, portMAX_DELAY) == pdTRUE) {
+        _pinnedTarget = target;
+        xSemaphoreGive(_prefsMutex);
+    } else {
+        _pinnedTarget = target;
+    }
+}
+
+uint32_t getPinnedDuration() {
+    return _pinnedDuration;
+}
+
+void setPinnedDuration(uint32_t sec) {
+    if (_prefsReady && xSemaphoreTake(_prefsMutex, portMAX_DELAY) == pdTRUE) {
+        _pinnedDuration = sec;
+        xSemaphoreGive(_prefsMutex);
+    } else {
+        _pinnedDuration = sec;
+    }
+}
+
+uint32_t getPinnedStartEpoch() {
+    return _pinnedStartEpoch;
+}
+
+void setPinnedStartEpoch(uint32_t epoch) {
+    if (_prefsReady && xSemaphoreTake(_prefsMutex, portMAX_DELAY) == pdTRUE) {
+        _pinnedStartEpoch = epoch;
+        xSemaphoreGive(_prefsMutex);
+    } else {
+        _pinnedStartEpoch = epoch;
+    }
+}
+
+uint32_t getPinnedRemainingSeconds() {
+    if (_pinnedMode == 0) return 0;
+    if (_pinnedDuration == 0) return 0; // 0 = infinite / until touched
+    uint32_t nowSec = (uint32_t)(timeManagerNow() > 100000 ? timeManagerNow() : (millis() / 1000));
+    if (nowSec < _pinnedStartEpoch) return _pinnedDuration;
+    uint32_t elapsed = nowSec - _pinnedStartEpoch;
+    if (elapsed >= _pinnedDuration) return 0;
+    return _pinnedDuration - elapsed;
 }

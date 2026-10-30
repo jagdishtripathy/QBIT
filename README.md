@@ -16,6 +16,7 @@
 > * **3.7V LiPo + TP4056 Battery Optimization**: Complete wiring and stability guide for powering QBIT inside the 3D-printed enclosure using a 3.7V LiPo battery, TP4056 charging module, and sliding switch without needing bulky boost converters.
 > * **Brownout & Wi-Fi Disconnect Fix**: Capped Wi-Fi STA transmission power from 19.5 dBm to `15 dBm`, eliminating 500 mA current surges that caused battery voltage sags and continuous brownout reboot loops.
 > * **UX Improvements**: Extended local IP address display on boot from 3s to 7s, added `"Scan / Tap for text"` QR prompt, and fixed `platformio.ini` to auto-detect Windows COM ports.
+> * **Pinned Display (Desk Badge & Kiosk Mode)**: Lock a chosen `.qgif` animation on continuous loop or display custom scrolling/static text banners (e.g. nameplates, status messages like `"DO NOT DISTURB"`), with duration timers and one-tap physical dismissal.
 
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC_BY--NC--SA_4.0-blue.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 [![Platform](https://img.shields.io/badge/Platform-ESP32--C3-green.svg)](#hardware-requirements)
@@ -84,6 +85,13 @@ QBIT is a retro robot-style desk companion that works like a personal BB call. O
 **Animation Playback**
 - Plays `.qgif` animations in shuffle mode from the device's local storage
 - Animations change automatically while QBIT is idle
+
+**Pinned Display (Desk Badge & Kiosk Mode)**
+- Lock a specific animation or custom text banner onto the OLED screen, pausing random emotion shuffles
+- **Animation Pinning**: Continuously loops any chosen `.qgif` from storage (logos, mascots, game sprites) without switching to other emotions
+- **Custom Text Banner**: Shows static centered text in a border frame (if <=120 px wide) or smoothly scrolls longer text horizontally (up to 64 characters)
+- **Configurable Duration**: Choose *Until Touched (Infinite)* or timed durations from 30 minutes to 7 days with live countdown and NVS reboot persistence
+- **Single-Tap Dismiss**: Tap the capacitive touch sensor at any time to instantly unpin and restore normal robot companion emotions
 
 **Poke Notifications**
 - Receive poke messages from other QBIT users on the network
@@ -233,8 +241,26 @@ From the dashboard you can:
 - View the unique device ID and set a custom display name
 - Adjust display brightness, buzzer volume, and animation playback speed
 - Upload and manage .qgif animation files
+- Lock a specific animation or custom text banner via **Pinned Display**
 - Configure a local MQTT broker connection for home automation (see [MQTT & Home Assistant](#mqtt--home-assistant))
 - Stream your device camera to the OLED in real time via Web Cam (single client at a time; supports multiple dithering modes)
+
+#### How to Use Pinned Display
+
+The **Pinned Display** section in the local dashboard (`http://qbit.local`) turns QBIT into an interactive desk badge, status monitor, or permanent animation kiosk:
+
+1. **Open Dashboard**: Go to `http://qbit.local` in your browser.
+2. **Locate Pinned Display Card**: Click the card header to expand it if collapsed.
+3. **Select Mode**:
+   - **Pinned Animation (.qgif)**: Select any `.qgif` file stored on flash from the dropdown. It will loop continuously without idle emotion interruptions.
+   - **Custom Text Banner**: Enter any custom text message (up to 64 characters), such as `"DO NOT DISTURB"`, `"IN A MEETING"`, `"BUSY CODING"`, or your name/handle.
+4. **Choose Duration**:
+   - **Until Touched (Infinite)**: Stays on screen indefinitely until manually dismissed or unpinned.
+   - **Timed Presets**: 30 Minutes, 1 Hour, 6 Hours, 12 Hours, 1 Day, 3 Days, or 7 Days. The dashboard displays a live countdown of remaining time.
+5. **Click Apply Pin**: The display immediately switches to the pinned animation or banner, and the dashboard status badge displays `ACTIVE` with a remaining time counter.
+6. **How to Dismiss / Stop**:
+   - **On Device**: Simply tap the capacitive touch sensor once. QBIT will play a touch chirp (if sound is enabled), instantly exit pinned mode, and resume normal robot emotions.
+   - **From Dashboard**: Click the **Unpin / Stop** button.
 
 ---
 

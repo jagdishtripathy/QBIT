@@ -1,2 +1,48 @@
+# Python
 **/venv/
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+
+# Agent & AI tooling
+.agents/
+skills-lock.json
+
+# Editors & IDEs
+.vscode/
+.idea/
+*.suo
+*.user
+*.code-workspace
+
+# PlatformIO & Firmware builds
+firmware/.pio/
+.pio/
+*.bin
+*.elf
+
+# Node.js & Web Platform
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+web/backend/data/
+web/backend/qbit.db
+web/backend/secrets.json
+web/**/.env
+web/**/.env.local
+.env
+
+# Backups & Temporary files
 tools/backups/
+*.tmp
+*.log
+
+# Operating System files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini

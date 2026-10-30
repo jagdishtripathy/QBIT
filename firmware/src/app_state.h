@@ -39,7 +39,8 @@ enum DisplayState {
     FLAPPY_OVER,
     CAR_RUNNING,
     CAR_OVER,
-    CAM_VIEW
+    CAM_VIEW,
+    PINNED_DISPLAY
 };
 
 // ==========================================================================
@@ -72,7 +73,8 @@ struct GestureEvent {
         WS_STATUS,
         MQTT_COMMAND,
         CAM_START,
-        CAM_STOP
+        CAM_STOP,
+        PINNED_UPDATE
     } kind;
 
     // Event-specific data

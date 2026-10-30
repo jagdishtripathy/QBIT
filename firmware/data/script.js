@@ -1476,3 +1476,184 @@ pollCurrent();
   btnOverlay.classList.remove('hidden');
   setOverlayState();
 })();
+
+// ==========================================================================
+//  Pinned Display / Banner Controller
+// ==========================================================================
+(function () {
+  var pinnedCard = document.getElementById('pinnedCard');
+  if (!pinnedCard) return;
+
+  var pinnedStatusPill = document.getElementById('pinnedStatusPill');
+  var pinnedMode = document.getElementById('pinnedMode');
+  var pinnedGifRow = document.getElementById('pinnedGifRow');
+  var pinnedGifSelect = document.getElementById('pinnedGifSelect');
+  var pinnedTextRow = document.getElementById('pinnedTextRow');
+  var pinnedTextInput = document.getElementById('pinnedTextInput');
+  var pinnedDuration = document.getElementById('pinnedDuration');
+  var pinnedTimerRow = document.getElementById('pinnedTimerRow');
+  var pinnedRemaining = document.getElementById('pinnedRemaining');
+  var btnPinnedApply = document.getElementById('btnPinnedApply');
+  var btnPinnedCancel = document.getElementById('btnPinnedCancel');
+  var pinnedMsg = document.getElementById('pinnedMsg');
+
+  function showMsg(text, isError) {
+    if (!pinnedMsg) return;
+    pinnedMsg.textContent = text;
+    pinnedMsg.className = 'msg ' + (isError ? 'msg-err' : 'msg-ok');
+    setTimeout(function () {
+      if (pinnedMsg.textContent === text) {
+        pinnedMsg.textContent = '';
+        pinnedMsg.className = 'msg';
+      }
+    }, 4000);
+  }
+
+  function updateModeUI() {
+    var mode = parseInt(pinnedMode.value, 10);
+    if (mode === 1) {
+      pinnedGifRow.style.display = '';
+      pinnedTextRow.style.display = 'none';
+    } else if (mode === 2) {
+      pinnedGifRow.style.display = 'none';
+      pinnedTextRow.style.display = '';
+    } else {
+      pinnedGifRow.style.display = 'none';
+      pinnedTextRow.style.display = 'none';
+    }
+  }
+
+  pinnedMode.addEventListener('change', updateModeUI);
+
+  // Populate .qgif files from /api/list
+  function refreshFileList() {
+    fetch('/api/list')
+      .then(function (res) { return res.json(); })
+      .then(function (files) {
+        if (!Array.isArray(files)) return;
+        var curVal = pinnedGifSelect.value;
+        pinnedGifSelect.innerHTML = '<option value="">(Select a file)</option>';
+        files.forEach(function (f) {
+          var name = typeof f === 'string' ? f : f.name;
+          if (name && name.endsWith('.qgif')) {
+            var opt = document.createElement('option');
+            opt.value = name;
+            opt.textContent = name;
+            pinnedGifSelect.appendChild(opt);
+          }
+        });
+        if (curVal) pinnedGifSelect.value = curVal;
+      })
+      .catch(function () {});
+  }
+
+  function fetchPinnedStatus() {
+    fetch('/api/pinned')
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        if (!data) return;
+        var isActive = Boolean(data.active);
+        if (pinnedStatusPill) {
+          pinnedStatusPill.textContent = isActive ? 'ACTIVE' : 'OFF';
+          pinnedStatusPill.classList.toggle('pill-on', isActive);
+          pinnedStatusPill.classList.toggle('pill-off', !isActive);
+        }
+        if (isActive) {
+          pinnedMode.value = String(data.mode);
+          updateModeUI();
+          if (data.mode === 1 && data.target) {
+            pinnedGifSelect.value = data.target;
+          } else if (data.mode === 2 && data.target) {
+            pinnedTextInput.value = data.target;
+          }
+          if (data.duration != null) {
+            pinnedDuration.value = String(data.duration);
+          }
+          if (data.duration > 0 && data.remaining > 0) {
+            pinnedTimerRow.style.display = '';
+            pinnedRemaining.textContent = fmtUptime(data.remaining);
+          } else if (data.duration === 0) {
+            pinnedTimerRow.style.display = '';
+            pinnedRemaining.textContent = 'Until touched (infinite)';
+          } else {
+            pinnedTimerRow.style.display = 'none';
+          }
+        } else {
+          pinnedTimerRow.style.display = 'none';
+        }
+      })
+      .catch(function () {});
+  }
+
+  btnPinnedApply.addEventListener('click', function () {
+    var mode = parseInt(pinnedMode.value, 10);
+    var target = '';
+    if (mode === 1) {
+      target = pinnedGifSelect.value;
+      if (!target) {
+        showMsg('Please select a .qgif file', true);
+        return;
+      }
+    } else if (mode === 2) {
+      target = (pinnedTextInput.value || '').trim();
+      if (!target) {
+        showMsg('Please enter banner text', true);
+        return;
+      }
+    }
+
+    var dur = parseInt(pinnedDuration.value, 10) || 0;
+    var params = new URLSearchParams();
+    params.set('mode', String(mode));
+    params.set('target', target);
+    params.set('duration', String(dur));
+
+    fetch('/api/pinned?' + params.toString(), {
+      method: 'POST'
+    })
+      .then(function (res) {
+        if (!res.ok) throw new Error('Failed to apply');
+        return res.json();
+      })
+      .then(function (data) {
+        showMsg('Pinned display applied successfully!', false);
+        fetchPinnedStatus();
+      })
+      .catch(function (err) {
+        showMsg('Failed to apply pinned display', true);
+      });
+  });
+
+  btnPinnedCancel.addEventListener('click', function () {
+    var params = new URLSearchParams();
+    params.set('mode', '0');
+    params.set('target', '');
+    params.set('duration', '0');
+
+    fetch('/api/pinned?' + params.toString(), {
+      method: 'POST'
+    })
+      .then(function (res) { return res.json(); })
+      .then(function (data) {
+        showMsg('Unpinned. Robot emotions restored.', false);
+        pinnedMode.value = '0';
+        updateModeUI();
+        fetchPinnedStatus();
+      })
+      .catch(function () {
+        showMsg('Failed to unpin', true);
+      });
+  });
+
+  refreshFileList();
+  fetchPinnedStatus();
+  updateModeUI();
+
+  // Poll status every 10s if card is visible
+  setInterval(function () {
+    if (!pinnedCard.classList.contains('collapsed')) {
+      fetchPinnedStatus();
+    }
+  }, 10000);
+})();
+

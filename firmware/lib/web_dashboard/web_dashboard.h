@@ -75,6 +75,17 @@ extern void    setWeatherLocation(float lat, float lon,
 extern void weatherScreenInvalidateCache();
 extern bool weatherScreenRefreshNow();
 
+// Pinned display -- implemented by settings.cpp
+extern uint8_t  getPinnedMode();
+extern void     setPinnedMode(uint8_t mode);
+extern String   getPinnedTarget();
+extern void     setPinnedTarget(const String &target);
+extern uint32_t getPinnedDuration();
+extern void     setPinnedDuration(uint32_t sec);
+extern uint32_t getPinnedStartEpoch();
+extern void     setPinnedStartEpoch(uint32_t epoch);
+extern uint32_t getPinnedRemainingSeconds();
+
 // ==========================================================================
 //  Web Cam streaming over WebSocket (/ws_cam)
 // ==========================================================================
