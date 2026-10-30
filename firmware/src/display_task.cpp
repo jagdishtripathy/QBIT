@@ -166,17 +166,24 @@ static const uint8_t icon_setting_bits[] PROGMEM = {
     0x11, 0x88, 0x13, 0xC8, 0x24, 0x24, 0xC4, 0x23,
     0x02, 0x40, 0x34, 0x2C, 0x48, 0x12, 0xC0, 0x03
 };
+static const uint8_t icon_ota_bits[] PROGMEM = {
+    0x00, 0x00, 0x80, 0x01, 0x80, 0x01, 0x80, 0x01,
+    0x80, 0x01, 0x80, 0x01, 0xF0, 0x0F, 0xE0, 0x07,
+    0xC0, 0x03, 0x80, 0x01, 0x00, 0x00, 0x0C, 0x30,
+    0x0C, 0x30, 0xFC, 0x3F, 0xF8, 0x1F, 0x00, 0x00
+};
 
 static void drawSettingsMenu() {
     if (_state == SETTINGS_MENU) {
-        // 4 items: WEATHER(0), TIMER(1), GAME LIBRARY(2), SETTING(3)
+        // 5 items: WEATHER(0), TIMER(1), GAME LIBRARY(2), SETTING(3), OTA UPDATE(4)
         // Display 3 rows at a time; scroll window follows cursor.
-        static const char *labels[4] = { "WEATHER", "TIMER", "GAME LIBRARY", "SETTING" };
-        static const uint8_t *icon_bits[4] = {
+        static const char *labels[5] = { "WEATHER", "TIMER", "GAME LIBRARY", "SETTING", "OTA UPDATE" };
+        static const uint8_t *icon_bits[5] = {
             icon_weather_bits,
             icon_timer_bits,
             icon_game_bits,
-            icon_setting_bits
+            icon_setting_bits,
+            icon_ota_bits
         };
         // Scroll window: show 3 rows, keep cursor visible
         uint8_t top = (_settingsCursor >= 3) ? _settingsCursor - 2 : 0;
@@ -184,7 +191,7 @@ static void drawSettingsMenu() {
         u8g2.setFont(u8g2_font_7x14B_tr);
         for (uint8_t row = 0; row < 3; row++) {
             uint8_t item = top + row;
-            if (item >= 4) break;
+            if (item >= 5) break;
             uint8_t y = (row + 1) * SETTINGS_ROW_H;
             bool isSelected = (item == _settingsCursor);
             if (isSelected) {
@@ -209,17 +216,16 @@ static void drawSettingsMenu() {
         return;
     }
 
-    // SETTINGS_OPTIONS: 6 items (QBIT Sound, GIF Invert, Flip Mode, Clock Format, [ SAVE ], [ CLOUD UPDATE ]). DBL = back.
-    static const char *labels[6] = {
+    // SETTINGS_OPTIONS: 5 items (QBIT Sound, GIF Invert, Flip Mode, Clock Format, [ SAVE ]). DBL = back.
+    static const char *labels[5] = {
         "QBIT Sound", "GIF Invert", "Flip Mode", "Clock Format",
-        "[ SAVE ]", "[ CLOUD UPDATE ]"
+        "[ SAVE ]"
     };
-    bool vals[6] = {
+    bool vals[5] = {
         _settingsPending.gifSound,
         _settingsPending.negativeGif,
         _settingsPending.flipMode,
         _settingsPending.timeFormat24h,
-        false,
         false
     };
 
@@ -231,7 +237,7 @@ static void drawSettingsMenu() {
 
     for (uint8_t row = 0; row < 4; row++) {
         uint8_t item = top + row;
-        if (item >= 6) break;
+        if (item >= 5) break;
 
         uint8_t y = (row + 1) * 15;
         bool isSelected = (item == _settingsCursor);
@@ -892,8 +898,20 @@ void displayTask(void *param) {
 
                 case SETTINGS_MENU:
                     _stateEntryMs = now;
-                    if (gesture.type == SINGLE_TAP) {
-                        _settingsCursor = (_settingsCursor + 1) % 4;
+                    if (_settingsConfirming) {
+                        if (gesture.type == SINGLE_TAP) {
+                            _settingsConfirming = false;
+                            otaInProgress = true;
+                            otaProgressPercent = 0;
+                            strncpy(otaStatusMsg, "Starting Cloud OTA...", sizeof(otaStatusMsg) - 1);
+                            otaCloudRequested = true;
+                            enterState(GIF_PLAYBACK);
+                        } else if (gesture.type == LONG_PRESS || gesture.type == DOUBLE_TAP) {
+                            _settingsConfirming = false;
+                            drawSettingsMenu();
+                        }
+                    } else if (gesture.type == SINGLE_TAP) {
+                        _settingsCursor = (_settingsCursor + 1) % 5;
                         drawSettingsMenu();
                     } else if (gesture.type == DOUBLE_TAP) {
                         enterState(GIF_PLAYBACK);
@@ -912,11 +930,23 @@ void displayTask(void *param) {
                             gameMenuEnter();
                             enterState(GAME_MENU);
                             gameMenuDraw();
-                        } else {
+                        } else if (_settingsCursor == 3) {
                             // SETTING
                             _settingsCursor = 0;
                             enterState(SETTINGS_OPTIONS);
                             drawSettingsMenu();
+                        } else {
+                            // OTA UPDATE
+                            _settingsConfirming = true;
+                            char verLine[32];
+                            if (updateAvailable && updateAvailableVersion[0] != '\0') {
+                                const char *v = (updateAvailableVersion[0] == 'v' || updateAvailableVersion[0] == 'V')
+                                                ? (updateAvailableVersion + 1) : updateAvailableVersion;
+                                snprintf(verLine, sizeof(verLine), "New: v%s", v);
+                            } else {
+                                snprintf(verLine, sizeof(verLine), "Cur: %s", kQbitVersion);
+                            }
+                            showText("[ OTA Update ]", verLine, "TAP  = update", "HOLD = cancel");
                         }
                     }
                     break;
@@ -966,10 +996,10 @@ void displayTask(void *param) {
                         }
                     } else {
                         if (gesture.type == SINGLE_TAP) {
-                            _settingsCursor = (_settingsCursor + 1) % 6;
+                            _settingsCursor = (_settingsCursor + 1) % 5;
                             drawSettingsMenu();
                         } else if (gesture.type == DOUBLE_TAP) {
-                            _settingsCursor = 0;
+                            _settingsCursor = 3;
                             enterState(SETTINGS_MENU);
                             drawSettingsMenu();
                         } else if (gesture.type == LONG_PRESS) {
@@ -979,12 +1009,6 @@ void displayTask(void *param) {
                                          "",
                                          "TAP  = confirm",
                                          "HOLD = cancel");
-                            } else if (_settingsCursor == 5) {
-                                otaInProgress = true;
-                                otaProgressPercent = 0;
-                                strncpy(otaStatusMsg, "Starting Cloud OTA...", sizeof(otaStatusMsg) - 1);
-                                otaCloudRequested = true;
-                                enterState(GIF_PLAYBACK);
                             } else {
                                 _settingsSelected = true;
                                 drawSettingsMenu();
