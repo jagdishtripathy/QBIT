@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version tag (e.g. v2.0.0)'
+        required: true
+        default: 'v2.0.0'
 
 permissions:
   contents: write
@@ -28,7 +34,7 @@ jobs:
 
       - name: Set firmware version
         run: |
-          VERSION="${{ github.ref_name }}"
+          VERSION="${{ inputs.version || github.ref_name }}"
           VERSION="${VERSION#v}"
           echo "QBIT_VERSION=$VERSION" >> "$GITHUB_ENV"
       
@@ -93,7 +99,7 @@ jobs:
       
       - name: Generate latest.json
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ inputs.version || github.ref_name }}
           REPOSITORY: ${{ github.repository }}
         run: |
           export TIMESTAMP=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -151,7 +157,7 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          VERSION="${{ github.ref_name }}"
+          VERSION="${{ inputs.version || github.ref_name }}"
           echo "version=$VERSION" >> $GITHUB_OUTPUT
       
       - name: Download all artifacts
@@ -161,7 +167,7 @@ jobs:
           path: dist/
       
       - name: Create Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.version }}
           name: Release ${{ steps.version.outputs.version }}
