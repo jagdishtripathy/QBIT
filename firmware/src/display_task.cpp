@@ -505,14 +505,27 @@ void displayTask(void *param) {
 
         // --- Wireless OTA progress screen (overrides normal display while active) ---
         if (otaInProgress) {
+            GestureEvent otaGesture;
+            while (xQueueReceive(gestureQueue, &otaGesture, 0) == pdTRUE) {
+                if ((otaGesture.type == LONG_PRESS || otaGesture.type == DOUBLE_TAP) &&
+                    otaProgressPercent < 100 && !otaCancelRequested) {
+                    otaCancelRequested = true;
+                    strncpy(otaStatusMsg, "Cancelling...", sizeof(otaStatusMsg) - 1);
+                }
+            }
             static unsigned long lastOtaDrawMs = 0;
             if (now - lastOtaDrawMs >= 100) {
                 lastOtaDrawMs = now;
                 int pct = otaProgressPercent;
                 if (pct < 0) pct = 0;
                 if (pct > 100) pct = 100;
-                char pctLine[24];
-                snprintf(pctLine, sizeof(pctLine), "Progress: %d%%", pct);
+                char statusLine[32];
+                if (pct > 0 && pct < 100 && !otaCancelRequested) {
+                    snprintf(statusLine, sizeof(statusLine), "Downloading %d%%", pct);
+                } else {
+                    strncpy(statusLine, (const char *)otaStatusMsg, sizeof(statusLine) - 1);
+                    statusLine[sizeof(statusLine) - 1] = '\0';
+                }
                 char bar[WIFI_AP_PROGRESS_LEN + 4];
                 unsigned int filled = (unsigned int)((pct * WIFI_AP_PROGRESS_LEN) / 100);
                 bar[0] = '[';
@@ -521,7 +534,8 @@ void displayTask(void *param) {
                 }
                 bar[WIFI_AP_PROGRESS_LEN + 1] = ']';
                 bar[WIFI_AP_PROGRESS_LEN + 2] = '\0';
-                showText("[ Wireless OTA ]", otaStatusMsg, pctLine, bar);
+                const char *line4 = (pct < 100 && !otaCancelRequested) ? "HOLD = cancel" : "";
+                showText("[ Wireless OTA ]", statusLine, bar, line4);
             }
             vTaskDelay(pdMS_TO_TICKS(20));
             continue;
@@ -943,10 +957,11 @@ void displayTask(void *param) {
                                 const char *v = (updateAvailableVersion[0] == 'v' || updateAvailableVersion[0] == 'V')
                                                 ? (updateAvailableVersion + 1) : updateAvailableVersion;
                                 snprintf(verLine, sizeof(verLine), "New: v%s", v);
+                                showText("[ OTA Update ]", verLine, "TAP  = install", "HOLD = cancel");
                             } else {
                                 snprintf(verLine, sizeof(verLine), "Cur: %s", kQbitVersion);
+                                showText("[ OTA Update ]", verLine, "TAP  = check now", "HOLD = back");
                             }
-                            showText("[ OTA Update ]", verLine, "TAP  = update", "HOLD = cancel");
                         }
                     }
                     break;

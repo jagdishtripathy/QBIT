@@ -527,6 +527,7 @@ static void checkFirmwareVersion() {
 //  Wireless Cloud Auto-OTA (HTTPS stream from GitHub Pages into inactive slot)
 // ==========================================================================
 static void performCloudOta() {
+    otaCancelRequested = false;
     if (WiFi.status() != WL_CONNECTED) {
         strncpy(otaStatusMsg, "No Wi-Fi connection", sizeof(otaStatusMsg) - 1);
         vTaskDelay(pdMS_TO_TICKS(2500));
@@ -536,6 +537,24 @@ static void performCloudOta() {
 
     otaInProgress      = true;
     otaProgressPercent = 0;
+    strncpy(otaStatusMsg, "Checking version...", sizeof(otaStatusMsg) - 1);
+    checkFirmwareVersion();
+
+    if (otaCancelRequested) {
+        strncpy(otaStatusMsg, "Update cancelled", sizeof(otaStatusMsg) - 1);
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        otaInProgress = false;
+        return;
+    }
+
+    if (!updateAvailable) {
+        snprintf(otaStatusMsg, sizeof(otaStatusMsg), "Up to date! (%s)", kQbitVersion);
+        Serial.printf("[OTA] Already on latest version (%s), skipping flash\n", kQbitVersion);
+        vTaskDelay(pdMS_TO_TICKS(2500));
+        otaInProgress = false;
+        return;
+    }
+
     strncpy(otaStatusMsg, "Connecting to cloud...", sizeof(otaStatusMsg) - 1);
     Serial.println("[OTA] Starting Cloud OTA from " CLOUD_OTA_FIRMWARE_URL);
 
@@ -568,7 +587,7 @@ static void performCloudOta() {
 
     int totalLen = http.getSize();
     size_t updateSize = (totalLen > 0) ? (size_t)totalLen : UPDATE_SIZE_UNKNOWN;
-    strncpy(otaStatusMsg, "Erasing & flashing...", sizeof(otaStatusMsg) - 1);
+    strncpy(otaStatusMsg, "Preparing flash...", sizeof(otaStatusMsg) - 1);
     if (!Update.begin(updateSize, U_FLASH)) {
         strncpy(otaStatusMsg, "OTA begin failed", sizeof(otaStatusMsg) - 1);
         http.end();
@@ -582,9 +601,14 @@ static void performCloudOta() {
     size_t written = 0;
     unsigned long lastDataMs = millis();
     bool writeErr = false;
+    bool cancelled = false;
 
     strncpy(otaStatusMsg, "Downloading...", sizeof(otaStatusMsg) - 1);
     while (http.connected() && (totalLen <= 0 || (int)written < totalLen)) {
+        if (otaCancelRequested) {
+            cancelled = true;
+            break;
+        }
         size_t avail = stream->available();
         if (avail > 0) {
             size_t toRead = (avail > sizeof(buf)) ? sizeof(buf) : avail;
@@ -612,6 +636,16 @@ static void performCloudOta() {
         vTaskDelay(pdMS_TO_TICKS(1));
     }
     http.end();
+
+    if (cancelled) {
+        Update.abort();
+        otaCancelRequested = false;
+        strncpy(otaStatusMsg, "Update cancelled", sizeof(otaStatusMsg) - 1);
+        Serial.println("[OTA] Cloud OTA cancelled by user");
+        vTaskDelay(pdMS_TO_TICKS(2000));
+        otaInProgress = false;
+        return;
+    }
 
     if (!writeErr && Update.end(true) && Update.isFinished()) {
         otaProgressPercent = 100;
@@ -1156,6 +1190,9 @@ void wifiApplyApRfStabilityForPcbAntenna() {
     if (m == WIFI_AP || m == WIFI_AP_STA) {
         WiFi.setTxPower(WIFI_POWER_13dBm);
         esp_wifi_set_bandwidth(WIFI_IF_AP, WIFI_BW_HT20);
+    } else if (m == WIFI_STA) {
+        WiFi.setTxPower(WIFI_POWER_15dBm);
+        esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
     }
 #endif
 }

@@ -426,10 +426,19 @@ static void handlePostOtaCloud(AsyncWebServerRequest *request) {
         request->send(409, "application/json", "{\"ok\":false,\"error\":\"OTA already in progress\"}");
         return;
     }
+    otaCancelRequested = false;
     otaInProgress      = true;
     otaProgressPercent = 0;
-    strncpy(otaStatusMsg, "Starting Cloud OTA...", sizeof(otaStatusMsg) - 1);
+    strncpy(otaStatusMsg, "Checking version...", sizeof(otaStatusMsg) - 1);
     otaCloudRequested  = true;
+    request->send(200, "application/json", "{\"ok\":true}");
+}
+
+static void handlePostOtaCancel(AsyncWebServerRequest *request) {
+    if (otaInProgress) {
+        otaCancelRequested = true;
+        strncpy(otaStatusMsg, "Cancelling...", sizeof(otaStatusMsg) - 1);
+    }
     request->send(200, "application/json", "{\"ok\":true}");
 }
 
@@ -468,6 +477,16 @@ static void handleOtaUploadData(AsyncWebServerRequest *request,
             otaInProgress = false;
             return;
         }
+    }
+
+    if (_otaUploadOk && otaCancelRequested) {
+        _otaUploadOk    = false;
+        _otaUploadError = "Update cancelled";
+        Update.abort();
+        otaCancelRequested = false;
+        strncpy(otaStatusMsg, "Update cancelled", sizeof(otaStatusMsg) - 1);
+        otaInProgress = false;
+        return;
     }
 
     if (_otaUploadOk && len > 0) {
@@ -1042,6 +1061,7 @@ void webDashboardInit(AsyncWebServer &server) {
     server.on("/api/pinned",        HTTP_POST, handlePostPinned);
     server.on("/api/ota/status",    HTTP_GET,  handleGetOtaStatus);
     server.on("/api/ota/cloud",     HTTP_POST, handlePostOtaCloud);
+    server.on("/api/ota/cancel",    HTTP_POST, handlePostOtaCancel);
     server.on("/api/ota/upload",    HTTP_POST, handleOtaUploadDone, handleOtaUploadData);
 
     // Catch-all: serve .qgif files from LittleFS for browser preview (path-normalized)

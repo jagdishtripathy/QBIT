@@ -22,6 +22,10 @@
 
 #include "gif_types.h"
 #include "sys_idle.h"
+#if defined(ESP32)
+#include "soc/soc.h"
+#include "soc/rtc_cntl_reg.h"
+#endif
 
 // ==========================================================================
 //  Web server (shared by NetWizard and web dashboard)
@@ -35,6 +39,10 @@ NetWizard      NW(&server);
 // ==========================================================================
 
 void setup() {
+#if defined(ESP32)
+    // Prevent 3.7V LiPo + TP4056 cold-boot voltage sag from triggering repeated brownout resets during boot animation
+    WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
+#endif
     Serial.begin(115200);
     Serial.setDebugOutput(false);
 

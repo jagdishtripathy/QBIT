@@ -26,4 +26,5 @@ volatile bool otaInProgress      = false;
 volatile int  otaProgressPercent = 0;
 char          otaStatusMsg[32]   = "Idle";
 volatile bool otaCloudRequested  = false;
+volatile bool otaCancelRequested = false;
 volatile bool otaRebootRequested = false;

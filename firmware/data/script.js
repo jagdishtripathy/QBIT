@@ -179,12 +179,21 @@ function setMqttPill(el, enabled, connected) {
   var otaProgressWrap = document.getElementById('otaProgressWrap');
   var otaProgressFill = document.getElementById('otaProgressFill');
   var otaProgressPct = document.getElementById('otaProgressPct');
+  var btnOtaCancel = document.getElementById('btnOtaCancel');
   var btnWifiReset = document.getElementById('btnWifiReset');
   var btnReboot = document.getElementById('btnReboot');
   var devMsg = document.getElementById('devMsg');
   var otaPollTimer = null;
+  var activeOtaXhr = null;
 
-  function setOtaProgress(pct, statusText, isErr) {
+  function hideOtaProgressBar() {
+    if (otaProgressWrap) {
+      otaProgressWrap.style.display = 'none';
+      otaProgressWrap.setAttribute('aria-hidden', 'true');
+    }
+  }
+
+  function setOtaProgress(pct, statusText, isErr, showCancel) {
     if (otaProgressWrap) {
       otaProgressWrap.style.display = 'flex';
       otaProgressWrap.setAttribute('aria-hidden', 'false');
@@ -192,11 +201,32 @@ function setMqttPill(el, enabled, connected) {
       otaProgressFill.style.width = v + '%';
       otaProgressPct.textContent = v + '%';
     }
+    if (btnOtaCancel) {
+      btnOtaCancel.style.display = (showCancel === false) ? 'none' : '';
+    }
     if (statusText != null) {
       devMsg.className = 'msg ' + (isErr ? 'error' : 'ok');
       devMsg.textContent = statusText;
       devMsg.style.display = 'block';
     }
+  }
+
+  if (btnOtaCancel) {
+    btnOtaCancel.addEventListener('click', function () {
+      if (activeOtaXhr) {
+        activeOtaXhr.abort();
+        activeOtaXhr = null;
+      }
+      fetch('/api/ota/cancel', { method: 'POST' }).catch(function () {});
+      if (otaPollTimer) {
+        clearInterval(otaPollTimer);
+        otaPollTimer = null;
+      }
+      hideOtaProgressBar();
+      devMsg.className = 'msg error';
+      devMsg.textContent = 'OTA update cancelled.';
+      devMsg.style.display = 'block';
+    });
   }
 
   function startCloudOtaPolling() {
@@ -207,15 +237,35 @@ function setMqttPill(el, enabled, connected) {
         .then(function (r) { return r.json(); })
         .then(function (st) {
           lostCount = 0;
-          setOtaProgress(st.progress || 0, 'Wireless OTA: ' + (st.status || 'Updating...'), false);
-          if (!st.in_progress && (st.progress || 0) < 100 && st.status && st.status.toLowerCase().indexOf('fail') >= 0) {
+          var msg = st.status || 'Updating...';
+          var lower = msg.toLowerCase();
+          if (lower.indexOf('up to date') >= 0) {
             clearInterval(otaPollTimer);
             otaPollTimer = null;
-            setOtaProgress(st.progress || 0, 'OTA failed: ' + st.status, true);
+            hideOtaProgressBar();
+            devMsg.className = 'msg ok';
+            devMsg.textContent = 'Already on the latest firmware (' + msg + '). No update needed.';
+            devMsg.style.display = 'block';
+            return;
+          }
+          if (lower.indexOf('cancel') >= 0 && !st.in_progress) {
+            clearInterval(otaPollTimer);
+            otaPollTimer = null;
+            hideOtaProgressBar();
+            devMsg.className = 'msg error';
+            devMsg.textContent = 'OTA update cancelled.';
+            devMsg.style.display = 'block';
+            return;
+          }
+          setOtaProgress(st.progress || 0, 'Wireless OTA: ' + msg, false, true);
+          if (!st.in_progress && (st.progress || 0) < 100 && (lower.indexOf('fail') >= 0 || lower.indexOf('error') >= 0)) {
+            clearInterval(otaPollTimer);
+            otaPollTimer = null;
+            setOtaProgress(st.progress || 0, 'OTA failed: ' + msg, true, false);
           } else if ((st.progress || 0) >= 100) {
             clearInterval(otaPollTimer);
             otaPollTimer = null;
-            setOtaProgress(100, 'Update complete! QBIT is rebooting... Page will reload in 8s.', false);
+            setOtaProgress(100, 'Update complete! QBIT is rebooting... Page will reload in 8s.', false, false);
             setTimeout(function () { window.location.reload(); }, 8000);
           }
         })
@@ -224,7 +274,7 @@ function setMqttPill(el, enabled, connected) {
           if (lostCount >= 3) {
             clearInterval(otaPollTimer);
             otaPollTimer = null;
-            setOtaProgress(100, 'QBIT is rebooting into new firmware... Reloading in 6s.', false);
+            setOtaProgress(100, 'QBIT is rebooting into new firmware... Reloading in 6s.', false, false);
             setTimeout(function () { window.location.reload(); }, 6000);
           }
         });
@@ -276,27 +326,30 @@ function setMqttPill(el, enabled, connected) {
       var fd = new FormData();
       fd.append('file', file, file.name);
       var xhr = new XMLHttpRequest();
+      activeOtaXhr = xhr;
       xhr.open('POST', '/api/ota/upload', true);
       xhr.upload.onprogress = function (ev) {
         if (ev.lengthComputable) {
           var pct = Math.round((ev.loaded * 100) / ev.total);
-          setOtaProgress(pct, 'Uploading ' + file.name + ' (' + pct + '%)...', false);
+          setOtaProgress(pct, 'Uploading ' + file.name + ' (' + pct + '%)...', false, true);
         }
       };
       xhr.onload = function () {
+        activeOtaXhr = null;
         if (xhr.status === 200) {
-          setOtaProgress(100, 'Firmware flashed! Rebooting QBIT... Page will reload in 7s.', false);
+          setOtaProgress(100, 'Firmware flashed! Rebooting QBIT... Page will reload in 7s.', false, false);
           setTimeout(function () { window.location.reload(); }, 7000);
         } else {
           var errMsg = 'Upload failed';
           try { errMsg = JSON.parse(xhr.responseText).error || errMsg; } catch (ex) {}
-          setOtaProgress(0, errMsg, true);
+          setOtaProgress(0, errMsg, true, false);
         }
       };
       xhr.onerror = function () {
-        setOtaProgress(0, 'Connection lost during firmware upload.', true);
+        activeOtaXhr = null;
+        setOtaProgress(0, 'Connection lost during firmware upload.', true, false);
       };
-      setOtaProgress(0, 'Starting firmware upload...', false);
+      setOtaProgress(0, 'Starting firmware upload...', false, true);
       xhr.send(fd);
     });
   }

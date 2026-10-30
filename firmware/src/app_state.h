@@ -165,6 +165,7 @@ extern volatile bool    otaInProgress;
 extern volatile int     otaProgressPercent;
 extern char             otaStatusMsg[32];
 extern volatile bool    otaCloudRequested;
+extern volatile bool    otaCancelRequested;
 extern volatile bool    otaRebootRequested;
 
 #endif // APP_STATE_H

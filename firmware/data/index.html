@@ -97,9 +97,10 @@
       <button class="btn btn-secondary" id="btnReboot">Reboot</button>
     </div>
     <input type="file" id="otaFileInput" accept=".bin" style="display:none">
-    <div class="backup-progress-wrap" id="otaProgressWrap" style="display:none;margin-top:10px" aria-hidden="true">
-      <div class="backup-progress-bar"><div class="backup-progress-fill" id="otaProgressFill" style="width:0%"></div></div>
+    <div class="backup-progress-wrap" id="otaProgressWrap" style="display:none;margin-top:10px;align-items:center;gap:8px" aria-hidden="true">
+      <div class="backup-progress-bar" style="flex:1"><div class="backup-progress-fill" id="otaProgressFill" style="width:0%"></div></div>
       <span class="backup-progress-pct" id="otaProgressPct">0%</span>
+      <button type="button" class="btn btn-del" id="btnOtaCancel" style="padding:3px 8px;font-size:11px">Cancel</button>
     </div>
     <div class="msg" id="devMsg"></div>
   </div>
