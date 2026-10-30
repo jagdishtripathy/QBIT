@@ -24,7 +24,7 @@ jobs:
 
       - name: Fetch latest release and prepare publish dir
         env:
-          REPO: SeanChangX/QBIT
+          REPO: ${{ github.repository }}
         run: |
           set -e
           API="https://api.github.com/repos/${REPO}/releases/latest"

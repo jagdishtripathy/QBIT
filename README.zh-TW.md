@@ -171,7 +171,7 @@ I2C 匯流排運行於 400 kHz。若 OLED 模組已內建上拉電阻（大多�
 
 最簡單的韌體燒錄方式是使用瀏覽器版燒錄工具，無需安裝任何工具鏈。
 
-1. 使用 Chrome 或 Edge（89 版以上）開啟 [QBIT 韌體燒錄器](https://seanchangx.github.io/QBIT/)。
+1. 使用 Chrome 或 Edge（89 版以上）開啟 [QBIT 韌體燒錄器](https://jagdishtripathy.github.io/QBIT/)。
 2. 透過 USB 連接 QBIT 開發板。
 3. 點擊 **Connect & Flash**，選擇對應的序列埠。
 4. 燒錄器會自動寫入 bootloader、分割表、韌體及檔案系統映像。

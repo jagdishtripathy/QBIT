@@ -201,7 +201,7 @@ The I2C bus runs at 400 kHz. No external pull-up resistors are needed if the OLE
 
 The easiest way to flash QBIT firmware is through the browser-based flasher. No toolchain installation is required.
 
-1. Open the [QBIT Firmware Flasher](https://seanchangx.github.io/QBIT/) in Chrome or Edge (version 89+).
+1. Open the [QBIT Firmware Flasher](https://jagdishtripathy.github.io/QBIT/) in Chrome or Edge (version 89+).
 2. Connect your QBIT board via USB.
 3. Click **Connect & Flash** and select the serial port.
 4. The flasher will write the bootloader, partition table, firmware, and filesystem image automatically.
@@ -539,9 +539,19 @@ Two workflows are included:
 - Creates a GitHub Release with `firmware.bin`, `littlefs.bin`, `bootloader.bin`, and `partitions.bin`
 
 **Deploy Flasher** (`deploy-gh-pages.yml`) -- triggered after a successful build or on push to main:
-- Downloads the latest release artifacts
-- Generates `manifest.json` for esp-web-tools with partition offsets matching `firmware/partitions.csv`
-- Deploys the flasher tool to GitHub Pages
+- Downloads the latest release artifacts from this repository (`jagdishtripathy/QBIT`)
+- Generates `manifest.json` and `latest.json` for esp-web-tools with partition offsets matching `firmware/partitions.csv`
+- Deploys the flasher tool to GitHub Pages (`https://jagdishtripathy.github.io/QBIT/`)
+
+**How to Publish Your Own Firmware Update:**
+1. Commit and push your changes to `main`.
+2. Create and push a semantic version tag (e.g. `v1.1.0`):
+   ```bash
+   git tag v1.1.0
+   git push origin v1.1.0
+   ```
+3. GitHub Actions will automatically compile `firmware.bin` and `littlefs.bin`, create a GitHub Release with `latest.json`, and publish the web flasher to `https://jagdishtripathy.github.io/QBIT/`.
+4. Online QBIT devices running an older version tag will detect the new version from `https://jagdishtripathy.github.io/QBIT/latest.json` and display `[ Update available ]` on the OLED and dashboard.
 
 To set up CI/CD, add these repository secrets in GitHub (Settings > Secrets and variables > Actions > Repository secrets):
 

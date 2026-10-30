@@ -443,9 +443,39 @@ static void wsMessage(WebsocketsClient &client, WebsocketsMessage message) {
 // ==========================================================================
 //  Firmware version check (HTTPS GET latest.json), deferred ~15s after WiFi
 // ==========================================================================
-#define VERSION_CHECK_URL "https://seanchangx.github.io/QBIT/latest.json"
+#ifndef VERSION_CHECK_URL
+#define VERSION_CHECK_URL "https://jagdishtripathy.github.io/QBIT/latest.json"
+#endif
 #define VERSION_CHECK_TIMEOUT_MS 45000  // HTTPClient uses ms (compare with millis())
 #define VERSION_RECHECK_INTERVAL_MS (6UL * 60UL * 60UL * 1000UL)  // periodic check while WiFi up
+
+// Parse "major.minor.patch" (ignoring optional leading 'v'/'V').
+static bool parseSemVer(const char *ver, int &maj, int &min, int &pat) {
+    if (!ver || ver[0] == '\0') return false;
+    if (ver[0] == 'v' || ver[0] == 'V') ver++;
+    if (ver[0] < '0' || ver[0] > '9') return false;
+    maj = 0; min = 0; pat = 0;
+    return sscanf(ver, "%d.%d.%d", &maj, &min, &pat) >= 1;
+}
+
+// Returns true only when remoteVer is strictly newer than localVer.
+// Local "dev-build" builds do not trigger false update notifications.
+static bool isRemoteVersionNewer(const char *localVer, const char *remoteVer) {
+    if (!localVer || !remoteVer || remoteVer[0] == '\0') return false;
+    if (strcmp(localVer, "dev-build") == 0) return false;
+
+    int lMaj = 0, lMin = 0, lPat = 0;
+    int rMaj = 0, rMin = 0, rPat = 0;
+    if (parseSemVer(localVer, lMaj, lMin, lPat) && parseSemVer(remoteVer, rMaj, rMin, rPat)) {
+        if (rMaj != lMaj) return rMaj > lMaj;
+        if (rMin != lMin) return rMin > lMin;
+        return rPat > lPat;
+    }
+
+    const char *remoteNorm = (remoteVer[0] == 'v' || remoteVer[0] == 'V') ? (remoteVer + 1) : remoteVer;
+    const char *localNorm  = (localVer[0] == 'v' || localVer[0] == 'V') ? (localVer + 1) : localVer;
+    return strcmp(remoteNorm, localNorm) != 0;
+}
 
 static void checkFirmwareVersion() {
     Serial.println("[Version] Checking...");
@@ -477,9 +507,7 @@ static void checkFirmwareVersion() {
         Serial.println("[Version] No version in JSON");
         return;
     }
-    const char *remoteNorm = (remoteVer[0] == 'v' || remoteVer[0] == 'V') ? (remoteVer + 1) : remoteVer;
-    const char *localNorm  = (kQbitVersion[0] == 'v' || kQbitVersion[0] == 'V') ? (kQbitVersion + 1) : kQbitVersion;
-    if (strcmp(remoteNorm, localNorm) != 0) {
+    if (isRemoteVersionNewer(kQbitVersion, remoteVer)) {
         updateAvailable = true;
         strncpy(updateAvailableVersion, remoteVer, UPDATE_AVAILABLE_VERSION_LEN - 1);
         updateAvailableVersion[UPDATE_AVAILABLE_VERSION_LEN - 1] = '\0';
@@ -487,7 +515,7 @@ static void checkFirmwareVersion() {
     } else {
         updateAvailable        = false;
         updateAvailableVersion[0] = '\0';
-        Serial.printf("[Version] Up to date: %s\n", kQbitVersion);
+        Serial.printf("[Version] Up to date: %s (remote: %s)\n", kQbitVersion, remoteVer);
     }
 }
 

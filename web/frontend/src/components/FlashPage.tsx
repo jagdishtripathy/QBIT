@@ -3,7 +3,7 @@ export default function FlashPage() {
     <div className="flash-page">
       <iframe
         className="flash-iframe"
-        src="https://seanchangx.github.io/QBIT/"
+        src="https://jagdishtripathy.github.io/QBIT/"
         title="QBIT Firmware Flasher"
         allow="serial"
       />
