@@ -562,15 +562,23 @@ static void performCloudOta() {
     if (_wsClient.available()) _wsClient.close();
     if (_mqttClient.connected()) _mqttClient.disconnect();
 
+    // Temporarily raise task priority to match displayTask (priority 2)
+    // so network streaming and flash writes are not starved by I2C redraws.
+    vTaskPrioritySet(NULL, 2);
+
     WiFiClientSecure client;
     client.setInsecure();
-    client.setTimeout(30);
+    // In Arduino framework, setTimeout() takes milliseconds.
+    // 30000ms = 30 seconds (prevents premature timeouts during SPI flash 64KB block erases)
+    client.setTimeout(30000);
 
     HTTPClient http;
     http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     http.setTimeout(30000);
+    http.setReuse(false);
     if (!http.begin(client, CLOUD_OTA_FIRMWARE_URL)) {
         strncpy(otaStatusMsg, "Connect failed", sizeof(otaStatusMsg) - 1);
+        vTaskPrioritySet(NULL, 1);
         vTaskDelay(pdMS_TO_TICKS(3000));
         otaInProgress = false;
         return;
@@ -580,6 +588,7 @@ static void performCloudOta() {
     if (code != HTTP_CODE_OK) {
         snprintf(otaStatusMsg, sizeof(otaStatusMsg), "HTTP error %d", code);
         http.end();
+        vTaskPrioritySet(NULL, 1);
         vTaskDelay(pdMS_TO_TICKS(3000));
         otaInProgress = false;
         return;
@@ -589,32 +598,45 @@ static void performCloudOta() {
     size_t updateSize = (totalLen > 0) ? (size_t)totalLen : UPDATE_SIZE_UNKNOWN;
     strncpy(otaStatusMsg, "Preparing flash...", sizeof(otaStatusMsg) - 1);
     if (!Update.begin(updateSize, U_FLASH)) {
-        strncpy(otaStatusMsg, "OTA begin failed", sizeof(otaStatusMsg) - 1);
+        snprintf(otaStatusMsg, sizeof(otaStatusMsg), "Begin fail: %d", Update.getError());
         http.end();
+        vTaskPrioritySet(NULL, 1);
         vTaskDelay(pdMS_TO_TICKS(3000));
         otaInProgress = false;
         return;
     }
 
     WiFiClient *stream = http.getStreamPtr();
-    uint8_t buf[1024];
+    const size_t OTA_BUF_SIZE = 4096;
+    uint8_t *buf = (uint8_t *)malloc(OTA_BUF_SIZE);
+    if (!buf) {
+        strncpy(otaStatusMsg, "Out of memory", sizeof(otaStatusMsg) - 1);
+        Update.abort();
+        http.end();
+        vTaskPrioritySet(NULL, 1);
+        vTaskDelay(pdMS_TO_TICKS(3000));
+        otaInProgress = false;
+        return;
+    }
+
     size_t written = 0;
     unsigned long lastDataMs = millis();
     bool writeErr = false;
     bool cancelled = false;
 
     strncpy(otaStatusMsg, "Downloading...", sizeof(otaStatusMsg) - 1);
-    while (http.connected() && (totalLen <= 0 || (int)written < totalLen)) {
+    while ((http.connected() || stream->available() > 0) && (totalLen <= 0 || (int)written < totalLen)) {
         if (otaCancelRequested) {
             cancelled = true;
             break;
         }
         size_t avail = stream->available();
         if (avail > 0) {
-            size_t toRead = (avail > sizeof(buf)) ? sizeof(buf) : avail;
+            size_t toRead = (avail > OTA_BUF_SIZE) ? OTA_BUF_SIZE : avail;
             int r = stream->readBytes(buf, toRead);
             if (r > 0) {
                 if (Update.write(buf, (size_t)r) != (size_t)r) {
+                    Serial.printf("[OTA] Flash write failed at %u bytes, err=%d\n", (unsigned)written, Update.getError());
                     writeErr = true;
                     break;
                 }
@@ -627,15 +649,18 @@ static void performCloudOta() {
                 }
             }
         } else {
-            if (millis() - lastDataMs > 20000) {
+            if (millis() - lastDataMs > 30000) {
+                Serial.printf("[OTA] Stream timeout (>30s) at %u bytes\n", (unsigned)written);
                 writeErr = true;
                 break;
             }
-            vTaskDelay(pdMS_TO_TICKS(5));
+            vTaskDelay(pdMS_TO_TICKS(10));
         }
-        vTaskDelay(pdMS_TO_TICKS(1));
     }
+    free(buf);
     http.end();
+
+    vTaskPrioritySet(NULL, 1);
 
     if (cancelled) {
         Update.abort();
@@ -647,6 +672,11 @@ static void performCloudOta() {
         return;
     }
 
+    if (totalLen > 0 && written < (size_t)totalLen) {
+        Serial.printf("[OTA] Incomplete: wrote %u of %d bytes\n", (unsigned)written, totalLen);
+        writeErr = true;
+    }
+
     if (!writeErr && Update.end(true) && Update.isFinished()) {
         otaProgressPercent = 100;
         strncpy(otaStatusMsg, "Success! Rebooting", sizeof(otaStatusMsg) - 1);
@@ -655,8 +685,8 @@ static void performCloudOta() {
         esp_restart();
     } else {
         Update.abort();
-        strncpy(otaStatusMsg, "Update failed!", sizeof(otaStatusMsg) - 1);
-        Serial.printf("[OTA] Cloud OTA failed (err=%u)\n", (unsigned)Update.getError());
+        snprintf(otaStatusMsg, sizeof(otaStatusMsg), "Fail: err=%d", Update.getError());
+        Serial.printf("[OTA] Cloud OTA failed (err=%u, written=%u/%d)\n", (unsigned)Update.getError(), (unsigned)written, totalLen);
         vTaskDelay(pdMS_TO_TICKS(3500));
         otaInProgress = false;
     }
