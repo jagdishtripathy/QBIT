@@ -17,6 +17,8 @@
 > * **Wi-Fi 掉線與重啟修復**：限制 Wi-Fi STA 發射功率至 `15 dBm`，消除 500mA 峰值突波導致的電池電壓驟降與 Brownout 循環重開機。
 > * **體驗優化**：延長開機 IP 顯示時間（3 秒至 7 秒），QR code 增加點擊切換文字提示，並支援 Windows COM port 自動偵測。
 > * **固定顯示功能（Pinned Display 桌上名牌與展覽模式）**：可鎖定特定 `.qgif` 動畫持續循環播放，或顯示自訂靜態/捲動文字橫幅（例如桌上名牌、`"DO NOT DISTURB"` 狀態提示），支援倒數定時器與觸控感測器單擊即刻解除。
+* **雙槽無線 OTA 升級（Cloud 雲端與 Local 網頁）**：雙 `app0`/`app1`（各 1.625 MB）分區架構，無需拆開 3D 列印外殼即可 100% 無線升級韌體。包含機上選單直接連線 GitHub Releases/Pages 雲端自動 OTA（支援版本比對、OLED 即時進度條、單擊取消），以及區域網路瀏覽器直接上傳二進位檔（`/api/ota/upload`）。
+* **無損 RLE 資源壓縮**：開機/閒置內嵌動畫與 LittleFS `.qgif` 檔案均採用 PackBits RLE 壓縮，為二進位檔節省超過 227 KB 快閃記憶體，並縮減動畫檔案體積達 75% 以上。
 
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC_BY--NC--SA_4.0-blue.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 [![Platform](https://img.shields.io/badge/Platform-ESP32--C3-green.svg)](#硬體需求)
@@ -115,12 +117,13 @@ ROOT
 │   ├── T-Rex Runner   （Chrome 小恐龍）
 │   ├── Flappy Bird    （點擊拍翅穿越管道）
 │   └── Car Avoidance  （切換車道躲車遊戲）
-└── SETTING
-    ├── QBIT Sound   （蜂鳴器開/關）
-    ├── GIF Invert   （反轉動畫顏色）
-    ├── Flip Mode    （螢幕 180°）
-    ├── Clock Format （12/24 小時制）
-    └── [ SAVE ]
+├── SETTING
+│   ├── QBIT Sound   （蜂鳴器開/關）
+│   ├── GIF Invert   （反轉動畫顏色）
+│   ├── Flip Mode    （螢幕 180°）
+│   ├── Clock Format （12/24 小時制）
+│   └── [ SAVE ]
+└── OTA UPDATE     （無線雲端自動 OTA：檢查 GitHub 版本、即時進度條、單擊取消）
 ```
 
 ---

@@ -17,6 +17,8 @@
 > * **Brownout & Wi-Fi Disconnect Fix**: Capped Wi-Fi STA transmission power from 19.5 dBm to `15 dBm`, eliminating 500 mA current surges that caused battery voltage sags and continuous brownout reboot loops.
 > * **UX Improvements**: Extended local IP address display on boot from 3s to 7s, added `"Scan / Tap for text"` QR prompt, and fixed `platformio.ini` to auto-detect Windows COM ports.
 > * **Pinned Display (Desk Badge & Kiosk Mode)**: Lock a chosen `.qgif` animation on continuous loop or display custom scrolling/static text banners (e.g. nameplates, status messages like `"DO NOT DISTURB"`), with duration timers and one-tap physical dismissal.
+* **Dual-Slot Wireless OTA Updates (Cloud & Local Web)**: Dual `app0`/`app1` (1.625 MB each) partition layout enables 100% wireless over-the-air firmware updates without taking apart the sealed 3D-printed case. Features on-device Wireless Cloud Auto-OTA from GitHub Releases/Pages with version checking, live OLED progress bar, and one-tap cancellation, alongside local browser upload (`/api/ota/upload`).
+* **Lossless RLE Asset Compression**: Custom PackBits RLE compression for embedded boot/idle animations and LittleFS `.qgif` files, saving >227 KB in binary flash and shrinking animation footprint by up to 75%.
 
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC_BY--NC--SA_4.0-blue.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 [![Platform](https://img.shields.io/badge/Platform-ESP32--C3-green.svg)](#hardware-requirements)
@@ -103,6 +105,12 @@ QBIT is a retro robot-style desk companion that works like a personal BB call. O
 - Shows current conditions and a short forecast on the OLED, fetched from a public weather API
 - Accessible from the top-level menu (long-press, then select **WEATHER**)
 
+**Wireless OTA Updates (Cloud & Local Web)**
+- **On-Device Wireless Cloud OTA**: Update directly from the root menu (**OTA UPDATE**). QBIT securely connects to GitHub Pages via HTTPS, checks `latest.json`, compares versions with `kQbitVersion`, displays current vs remote version, and streams the firmware into the inactive OTA partition with a live progress bar.
+- **One-Tap Download Cancellation**: If you decide to cancel an OTA download in progress, simply tap the touch sensor to immediately abort cleanly without bricking the device.
+- **Local Web Dashboard OTA**: Upload pre-compiled `firmware.bin` or `littlefs.bin` directly from any phone or PC browser via `http://qbit.local` under the **Firmware Update (OTA)** card.
+- **Fail-Safe Dual Boot**: Uses dual 1.625 MB application slots (`app0` and `app1`). The active partition is only switched once flash verification succeeds.
+
 **UI structure**
 
 Long press to open; tap to scroll, long press to enter. Double-tap at top level exits; 10 s idle auto-exits. SETTING changes apply only after **[ SAVE ]**.
@@ -115,12 +123,13 @@ ROOT
 │   ├── T-Rex Runner   (Chrome dino game)
 │   ├── Flappy Bird    (tap-to-fly through pipes)
 │   └── Car Avoidance  (lane-dodge driving game)
-└── SETTING
-    ├── QBIT Sound   (buzzer on/off)
-    ├── GIF Invert   (invert animation colours)
-    ├── Flip Mode    (display 180°)
-    ├── Clock Format (12h / 24h)
-    └── [ SAVE ]
+├── SETTING
+│   ├── QBIT Sound   (buzzer on/off)
+│   ├── GIF Invert   (invert animation colours)
+│   ├── Flip Mode    (display 180°)
+│   ├── Clock Format (12h / 24h)
+│   └── [ SAVE ]
+└── OTA UPDATE     (Wireless Cloud Auto-OTA: checks GitHub releases, live progress bar, tap to cancel)
 ```
 
 ---
@@ -261,6 +270,29 @@ The **Pinned Display** section in the local dashboard (`http://qbit.local`) turn
 6. **How to Dismiss / Stop**:
    - **On Device**: Simply tap the capacitive touch sensor once. QBIT will play a touch chirp (if sound is enabled), instantly exit pinned mode, and resume normal robot emotions.
    - **From Dashboard**: Click the **Unpin / Stop** button.
+
+---
+
+### Wireless Firmware Updates (OTA)
+
+Since QBIT is sealed inside a 3D-printed enclosure with only the TP4056 charging port exposed, all firmware updates can be performed completely wirelessly via two methods:
+
+#### Method 1: On-Device Wireless Cloud Auto-OTA (Recommended)
+1. **Open Root Menu**: Long-press the capacitive touch sensor until the menu appears.
+2. **Select OTA UPDATE**: Tap repeatedly to scroll past `SETTING` to **`OTA UPDATE`**, then long-press to enter.
+3. **Version Check**: QBIT connects to Wi-Fi and queries the GitHub release server (`latest.json`):
+   - If already on the latest version, it displays `"Up to date! (vX.Y.Z)"` and exits safely.
+   - If a newer version is available, it shows the current version and new version prompt.
+4. **Download & Flash**: Tap to confirm. QBIT downloads the new firmware over HTTPS with a live OLED progress bar (`"Downloading XX%"`).
+5. **Cancel Anytime**: Tap the touch sensor at any time during download to cancel safely.
+6. **Automatic Reboot**: Upon successful download and cryptographic validation, QBIT automatically swaps the active boot slot and reboots into the new firmware.
+
+#### Method 2: Local Web Dashboard OTA (Offline / Custom Builds)
+1. Connect to the same Wi-Fi network as your QBIT.
+2. Navigate to `http://qbit.local` (or your device's IP address) in your web browser.
+3. Scroll to the **Firmware Update (OTA)** section.
+4. Choose your `.bin` file (`firmware.bin` or filesystem `littlefs.bin`).
+5. Click **Flash Firmware / Upload**. A live upload bar will show progress, and QBIT will reboot automatically upon completion.
 
 ---
 

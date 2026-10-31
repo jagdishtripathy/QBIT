@@ -53,6 +53,30 @@ def bitmap_to_image(bitmap, width, height, invert=False):
     return img
 
 
+def rle_decode(src: bytes, expected_len: int) -> bytes:
+    """Decode a PackBits RLE frame matching qgifRleDecode() in gif_types.h."""
+    out = bytearray()
+    i = 0
+    n = len(src)
+    while i < n and len(out) < expected_len:
+        ctrl = src[i]
+        i += 1
+        if ctrl & 0x80:
+            run = ctrl & 0x7F
+            if i >= n:
+                break
+            val = src[i]
+            i += 1
+            out.extend([val] * run)
+        else:
+            lit = ctrl
+            out.extend(src[i : i + lit])
+            i += lit
+    if len(out) < expected_len:
+        out.extend([0] * (expected_len - len(out)))
+    return bytes(out[:expected_len])
+
+
 def convert_qgif(input_path, output_path=None, invert=False, scale=1):
     """Convert a .qgif file back to an animated GIF. Returns True on success."""
     input_path = Path(input_path)
@@ -74,7 +98,10 @@ def convert_qgif(input_path, output_path=None, invert=False, scale=1):
     # --- Parse header ---
     frame_count = struct.unpack_from("<B", data, 0)[0]
     width = struct.unpack_from("<H", data, 1)[0]
-    height = struct.unpack_from("<H", data, 3)[0]
+    raw_height = struct.unpack_from("<H", data, 3)[0]
+
+    is_rle = bool(raw_height & 0x8000)
+    height = raw_height & ~0x8000
 
     if frame_count == 0:
         print(f"Error: {input_path} has 0 frames")
@@ -83,12 +110,6 @@ def convert_qgif(input_path, output_path=None, invert=False, scale=1):
     frame_size = (width // 8) * height
     header_size = 5
     delays_size = frame_count * 2
-    expected_size = header_size + delays_size + frame_count * frame_size
-
-    if len(data) < expected_size:
-        print(f"Error: {input_path} is truncated "
-              f"(expected {expected_size} bytes, got {len(data)})")
-        return False
 
     # --- Parse delays ---
     delays = []
@@ -100,20 +121,38 @@ def convert_qgif(input_path, output_path=None, invert=False, scale=1):
 
     # --- Parse frames ---
     frames = []
-    for i in range(frame_count):
-        bitmap = data[offset:offset + frame_size]
-        img = bitmap_to_image(bitmap, width, height, invert)
+    if is_rle:
+        offsets_size = (frame_count + 1) * 4
+        if len(data) < offset + offsets_size:
+            print(f"Error: {input_path} is truncated in RLE offset table")
+            return False
+        offsets = []
+        for i in range(frame_count + 1):
+            offsets.append(struct.unpack_from("<I", data, offset + i * 4)[0])
+        rle_payload_start = offset + offsets_size
+        rle_payload = data[rle_payload_start:]
 
-        # Optionally scale up for better visibility
-        if scale > 1:
-            img = img.resize(
-                (width * scale, height * scale),
-                Image.NEAREST  # nearest-neighbor preserves sharp pixels
-            )
-
-        # Convert to palette mode for GIF
-        frames.append(img.convert("P"))
-        offset += frame_size
+        for i in range(frame_count):
+            start = offsets[i]
+            end = offsets[i + 1]
+            slice_data = rle_payload[start:end]
+            bitmap = rle_decode(slice_data, frame_size)
+            img = bitmap_to_image(bitmap, width, height, invert)
+            if scale > 1:
+                img = img.resize((width * scale, height * scale), Image.NEAREST)
+            frames.append(img.convert("P"))
+    else:
+        expected_size = header_size + delays_size + frame_count * frame_size
+        if len(data) < expected_size:
+            print(f"Error: {input_path} is truncated (expected {expected_size} bytes, got {len(data)})")
+            return False
+        for i in range(frame_count):
+            bitmap = data[offset:offset + frame_size]
+            img = bitmap_to_image(bitmap, width, height, invert)
+            if scale > 1:
+                img = img.resize((width * scale, height * scale), Image.NEAREST)
+            frames.append(img.convert("P"))
+            offset += frame_size
 
     # --- Write animated GIF ---
     if len(frames) == 1:
