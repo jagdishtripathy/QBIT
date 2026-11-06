@@ -680,7 +680,15 @@ async function pf(n) {
 // Delete a file
 async function df(n) {
   if (!confirm('Delete ' + n + '?')) return;
-  await fetch('/api/delete?name=' + encodeURIComponent(n), { method: 'POST' });
+  try {
+    var res = await fetch('/api/delete?name=' + encodeURIComponent(n), { method: 'POST' });
+    if (!res.ok) {
+      var err = await res.json().catch(function() { return {}; });
+      alert('Delete failed: ' + (err.error || res.statusText));
+    }
+  } catch (e) {
+    alert('Delete error: ' + e.message);
+  }
   lf();
   ls();
 }
@@ -1246,25 +1254,37 @@ document.getElementById('btnBackupAll').addEventListener('click', backupAllQgif)
 // Track currently playing file and sync highlighting
 var _currentFile = '';
 
-// Poll current playing file every 3 seconds
+// Poll current playing file every 2 seconds
 function pollCurrent() {
   fetch('/api/current').then(function (r) { return r.json(); }).then(function (d) {
-    if (d.name !== _currentFile) {
-      _currentFile = d.name;
-      // Update file list highlighting
+    var activeName = d.name || '';
+    if (d.idle) {
+      // Device is showing companion idle emotion face
       document.querySelectorAll('.file-name').forEach(function (el) {
-        if (el.textContent === _currentFile) {
-          el.classList.add('playing');
-        } else {
-          el.classList.remove('playing');
-        }
+        el.classList.remove('playing');
       });
-      // Trigger preview update
-      if (typeof startPreview === 'function') startPreview(_currentFile);
+      var nameEl = document.getElementById('previewName');
+      if (nameEl && _previewFile !== '(idle)') {
+        nameEl.textContent = 'Companion Face (Idle)';
+      }
+    } else {
+      if (activeName !== _currentFile) {
+        _currentFile = activeName;
+        // Update file list highlighting
+        document.querySelectorAll('.file-name').forEach(function (el) {
+          if (el.textContent === _currentFile) {
+            el.classList.add('playing');
+          } else {
+            el.classList.remove('playing');
+          }
+        });
+        // Trigger preview update
+        if (typeof startPreview === 'function') startPreview(_currentFile);
+      }
     }
   }).catch(function () {});
 }
-setInterval(pollCurrent, 3000);
+setInterval(pollCurrent, 2000);
 
 // Card collapse toggle -- click card-title to expand/collapse (only collapsible cards)
 (function () {

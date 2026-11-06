@@ -268,6 +268,8 @@ static void handleUploadData(AsyncWebServerRequest *request,
             return;
         }
 
+        gifPlayerBuildShuffleBag();
+
         if (gifPlayerGetCurrentFile().length() == 0)
             gifPlayerSetFile(basename);
     }
@@ -309,11 +311,44 @@ static void handleDelete(AsyncWebServerRequest *request) {
         return;
     }
 
-    LittleFS.remove(path);
+    // If the file being deleted is currently playing, stop/close it first so LittleFS can remove it
+    bool wasPlaying = (gifPlayerGetCurrentFile() == name);
+    if (wasPlaying) {
+        gifPlayerStop();
+        vTaskDelay(pdMS_TO_TICKS(30)); // Allow display task tick to release file handle
+    }
 
-    if (gifPlayerGetCurrentFile() == name) {
-        String next = gifPlayerGetFirstFile();
-        gifPlayerSetFile(next);
+    // If deleted file was pinned, reset pinned mode
+    if (getPinnedMode() == 1 && getPinnedTarget() == name) {
+        setPinnedMode(0);
+        setPinnedTarget("");
+        saveSettings();
+        if (networkEventQueue) {
+            NetworkEvent evt;
+            memset(&evt, 0, sizeof(evt));
+            evt.kind = NetworkEvent::PINNED_UPDATE;
+            xQueueSend(networkEventQueue, &evt, 0);
+        }
+    }
+
+    if (!LittleFS.remove(path)) {
+        Serial.printf("web: failed to remove %s\n", path.c_str());
+        request->send(500, "application/json", "{\"error\":\"Failed to delete file\"}");
+        return;
+    }
+
+    // Rebuild shuffle bag immediately without the deleted file
+    gifPlayerBuildShuffleBag();
+
+    if (wasPlaying) {
+        if (gifPlayerHasFiles()) {
+            String next = gifPlayerNextShuffle();
+            if (next.length() > 0) {
+                gifPlayerSetFile(next);
+            }
+        } else {
+            gifPlayerStartIdleIfNoUserGifs();
+        }
     }
 
     request->send(200, "application/json", "{\"ok\":true}");
@@ -376,6 +411,18 @@ static void handlePlay(AsyncWebServerRequest *request) {
         return;
     }
 
+    // If device was in Pinned Mode, clear pinned mode so it can cycle or play normally
+    if (getPinnedMode() != 0) {
+        setPinnedMode(0);
+        saveSettings();
+        if (networkEventQueue) {
+            NetworkEvent evt;
+            memset(&evt, 0, sizeof(evt));
+            evt.kind = NetworkEvent::PINNED_UPDATE;
+            xQueueSend(networkEventQueue, &evt, 0);
+        }
+    }
+    gifPlayerSetAutoAdvance(1);
     gifPlayerSetFile(name);
     request->send(200, "application/json", "{\"ok\":true}");
 }
@@ -670,7 +717,9 @@ static void handlePostPins(AsyncWebServerRequest *request) {
 
 static void handleCurrent(AsyncWebServerRequest *request) {
     StaticJsonDocument<256> doc;
-    doc["name"] = gifPlayerGetCurrentFile();
+    doc["name"]   = gifPlayerGetCurrentFile();
+    doc["idle"]   = gifPlayerIsIdle();
+    doc["pinned"] = (getPinnedMode() != 0);
     String json;
     serializeJson(doc, json);
     request->send(200, "application/json", json);

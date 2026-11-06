@@ -51,6 +51,12 @@ uint16_t gifPlayerGetSpeed();
 // before the next GIF starts.  Pass nullptr to disable.
 void gifPlayerSetIdleAnimation(const AnimatedGIF *idle);
 
+// Return true if the idle companion animation is currently playing between GIFs.
+bool gifPlayerIsIdle();
+
+// Immediately stop current playback and close open file handle.
+void gifPlayerStop();
+
 // No .qgif on flash: start idle animation so GIF_PLAYBACK keeps updating after a text screen.
 void gifPlayerStartIdleIfNoUserGifs();
 

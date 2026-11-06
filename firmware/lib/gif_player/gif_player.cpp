@@ -215,7 +215,7 @@ String gifPlayerGetNextFile(const String &current) {
 // Shuffle bag -- Fisher-Yates for fair random without immediate repeats
 // ---------------------------------------------------------------------------
 
-void gifPlayerBuildShuffleBag() {
+static void _buildShuffleBagInternal() {
   File root = LittleFS.open("/");
   if (!root || !root.isDirectory()) { _shuffleTotal = 0; return; }
 
@@ -242,17 +242,22 @@ void gifPlayerBuildShuffleBag() {
   _shufflePos = 0;
 }
 
+void gifPlayerBuildShuffleBag() {
+  if (gifPlayerMutex) xSemaphoreTake(gifPlayerMutex, portMAX_DELAY);
+  _buildShuffleBagInternal();
+  if (gifPlayerMutex) xSemaphoreGive(gifPlayerMutex);
+}
+
 String gifPlayerNextShuffle() {
-  if (_shuffleTotal == 0) return "";
-  if (_shuffleTotal == 1) return _shuffleBag[0];
+  if (gifPlayerMutex) xSemaphoreTake(gifPlayerMutex, portMAX_DELAY);
+  if (_shuffleTotal == 0 || _shufflePos >= _shuffleTotal) {
+    String last = (_shuffleTotal > 0) ? _shuffleBag[_shuffleTotal - 1] : "";
 
-  if (_shufflePos >= _shuffleTotal) {
-    // Remember the last file handed out so we can avoid repeating it
-    // at the boundary between two shuffles.
-    String last = _shuffleBag[_shuffleTotal - 1];
-
-    gifPlayerBuildShuffleBag();
-    if (_shuffleTotal == 0) return "";
+    _buildShuffleBagInternal();
+    if (_shuffleTotal == 0) {
+      if (gifPlayerMutex) xSemaphoreGive(gifPlayerMutex);
+      return "";
+    }
 
     // If the new bag starts with the same file that ended the old bag,
     // swap it to a random other position.
@@ -263,7 +268,16 @@ String gifPlayerNextShuffle() {
     }
   }
 
-  return _shuffleBag[_shufflePos++];
+  if (_shuffleTotal == 1) {
+    _shufflePos = 0;
+    String res = _shuffleBag[0];
+    if (gifPlayerMutex) xSemaphoreGive(gifPlayerMutex);
+    return res;
+  }
+
+  String res = _shuffleBag[_shufflePos++];
+  if (gifPlayerMutex) xSemaphoreGive(gifPlayerMutex);
+  return res;
 }
 
 void gifPlayerSetAutoAdvance(uint8_t loopsPerGif) {
@@ -321,6 +335,25 @@ uint16_t gifPlayerGetSpeed() {
   return s;
 }
 
+bool gifPlayerIsIdle() {
+  if (gifPlayerMutex) xSemaphoreTake(gifPlayerMutex, portMAX_DELAY);
+  bool idle = _idlePlaying;
+  if (gifPlayerMutex) xSemaphoreGive(gifPlayerMutex);
+  return idle;
+}
+
+void gifPlayerStop() {
+  if (gifPlayerMutex) xSemaphoreTake(gifPlayerMutex, portMAX_DELAY);
+  if (_file) {
+    _file.close();
+  }
+  _playing       = false;
+  _currentFile   = "";
+  _requestedFile = "";
+  _fileChanged   = false;
+  if (gifPlayerMutex) xSemaphoreGive(gifPlayerMutex);
+}
+
 void gifPlayerTick() {
   if (!_display) return;
 
@@ -370,7 +403,16 @@ void gifPlayerTick() {
   if (_fileChanged) {
     _fileChanged = false;
     if (_requestedFile.length() > 0) {
-      _openFile(_requestedFile);
+      if (!_openFile(_requestedFile)) {
+        // File failed to open (deleted or corrupted) -- fall back to idle rather than freezing
+        if (_idleAnim) {
+          _idlePlaying     = true;
+          _idleFrame       = 0;
+          _idleLoopCount   = 0;
+          _idleLoopTarget  = 1;
+          _idleLastFrameMs = 0;
+        }
+      }
     } else {
       if (_file) _file.close();
       _playing     = false;
