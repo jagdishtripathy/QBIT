@@ -2223,10 +2223,12 @@ pollCurrent();
   function updateProviderFields() {
     if (!providerSelect) return;
     var p = parseInt(providerSelect.value, 10) || 0;
+    var helpEl = document.getElementById('musicCloudHelp');
     if (p === 0) {
       if (cloudUserRow) cloudUserRow.style.display = 'none';
       if (cloudKeyRow) cloudKeyRow.style.display = 'none';
       if (cloudTokenRow) cloudTokenRow.style.display = 'none';
+      if (helpEl) helpEl.style.display = 'none';
     } else if (p === 1) {
       if (cloudUserRow) cloudUserRow.style.display = '';
       if (cloudKeyRow) cloudKeyRow.style.display = '';
@@ -2234,6 +2236,11 @@ pollCurrent();
       if (cloudUserLabel) cloudUserLabel.textContent = 'Last.fm User';
       if (cloudKeyLabel) cloudKeyLabel.textContent = 'Last.fm API Key';
       if (cloudUserInput) cloudUserInput.placeholder = 'Your Last.fm username';
+      if (helpEl) {
+        helpEl.style.display = 'block';
+        helpEl.innerHTML = '1. Link Spotify: <a href="https://www.last.fm/settings/applications" target="_blank" style="color:#30d158;text-decoration:underline">last.fm/settings/applications</a><br>' +
+                           '2. Get free API Key: <a href="https://www.last.fm/api/account/create" target="_blank" style="color:#30d158;text-decoration:underline">last.fm/api/account/create</a>';
+      }
     } else if (p === 2) {
       if (cloudUserRow) cloudUserRow.style.display = '';
       if (cloudKeyRow) cloudKeyRow.style.display = '';
@@ -2241,6 +2248,10 @@ pollCurrent();
       if (cloudUserLabel) cloudUserLabel.textContent = 'Client ID';
       if (cloudKeyLabel) cloudKeyLabel.textContent = 'Client Secret';
       if (cloudUserInput) cloudUserInput.placeholder = 'Spotify Client ID';
+      if (helpEl) {
+        helpEl.style.display = 'block';
+        helpEl.innerHTML = 'Requires Spotify Premium & Spotify Developer Web API app.';
+      }
     }
   }
 
@@ -2265,6 +2276,10 @@ pollCurrent();
         if (cloudTokenInput && cfg.has_token) {
           cloudTokenInput.placeholder = 'Saved in ESP32 NVS (leave blank to keep)';
         }
+        if (cfg.status) {
+          var isErr = /fail|error|invalid|missing/i.test(cfg.status);
+          showMusicMsg(cfg.status, isErr);
+        }
         updateProviderFields();
       })
       .catch(function () {});
@@ -2276,6 +2291,7 @@ pollCurrent();
       var params = new URLSearchParams();
       params.set('provider', providerSelect ? providerSelect.value : '0');
       params.set('user', cloudUserInput ? cloudUserInput.value.trim() : '');
+      params.set('api_key', cloudKeyInput ? cloudKeyInput.value.trim() : '');
       params.set('key', cloudKeyInput ? cloudKeyInput.value.trim() : '');
       params.set('token', cloudTokenInput ? cloudTokenInput.value.trim() : '');
       fetch('/api/music/config?' + params.toString(), { method: 'POST' })
@@ -2351,6 +2367,20 @@ pollCurrent();
         }
       })
       .catch(function () {});
+
+    if (tick % 60 === 0) {
+      fetch('/api/music/config')
+        .then(function (r) { return r.json(); })
+        .then(function (cfg) {
+          if (!cfg) return;
+          var p = parseInt(providerSelect ? providerSelect.value : '0', 10);
+          if (p !== 0 && cfg.status) {
+            var isErr = /fail|error|invalid|missing/i.test(cfg.status);
+            showMusicMsg(cfg.status, isErr);
+          }
+        })
+        .catch(function () {});
+    }
   }
   pollMusicStatus();
   setInterval(pollMusicStatus, 2000);

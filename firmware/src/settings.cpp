@@ -85,6 +85,7 @@ static uint8_t  _musicProvider    = 0;
 static String   _musicUser        = "";
 static String   _musicApiKey      = "";
 static String   _musicToken       = "";
+static char     _cloudMusicStatus[64] = "Extension / MQTT";
 
 // ==========================================================================
 //  Time format (24h/12h)
@@ -529,6 +530,17 @@ uint8_t getMusicProvider() { return _musicProvider; }
 String  getMusicUser()     { return _musicUser; }
 String  getMusicApiKey()   { return _musicApiKey; }
 String  getMusicToken()    { return _musicToken; }
+
+const char *getCloudMusicStatus() {
+    return _cloudMusicStatus;
+}
+
+void setCloudMusicStatus(const char *status) {
+    if (status) {
+        strncpy(_cloudMusicStatus, status, sizeof(_cloudMusicStatus) - 1);
+        _cloudMusicStatus[sizeof(_cloudMusicStatus) - 1] = '\0';
+    }
+}
 
 void setMusicCloudConfig(uint8_t provider, const String &user,
                          const String &apiKey, const String &token) {

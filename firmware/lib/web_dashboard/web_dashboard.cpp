@@ -904,6 +904,7 @@ static void handleGetMusicConfig(AsyncWebServerRequest *request) {
     doc["user"]      = getMusicUser();
     doc["has_key"]   = (getMusicApiKey().length() > 0);
     doc["has_token"] = (getMusicToken().length() > 0);
+    doc["status"]    = getCloudMusicStatus();
     String json;
     serializeJson(doc, json);
     request->send(200, "application/json", json);
@@ -923,7 +924,7 @@ static void handlePostMusicConfig(AsyncWebServerRequest *request) {
         val.trim();
         user = val;
     }
-    if (getParamValue(request, "api_key", val)) {
+    if (getParamValue(request, "api_key", val) || getParamValue(request, "key", val)) {
         val.trim();
         apiKey = val;
     }
@@ -933,6 +934,13 @@ static void handlePostMusicConfig(AsyncWebServerRequest *request) {
     }
 
     setMusicCloudConfig(provider, user, apiKey, token);
+    if (provider == 1) {
+        setCloudMusicStatus("Checking Last.fm...");
+    } else if (provider == 2) {
+        setCloudMusicStatus("Checking Spotify...");
+    } else {
+        setCloudMusicStatus("Browser Extension / MQTT");
+    }
     handleGetMusicConfig(request);
 }
 

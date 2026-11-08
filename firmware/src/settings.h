@@ -135,6 +135,8 @@ uint8_t  getMusicProvider();
 String   getMusicUser();
 String   getMusicApiKey();
 String   getMusicToken();
+const char *getCloudMusicStatus();
+void     setCloudMusicStatus(const char *status);
 void     setMusicCloudConfig(uint8_t provider, const String &user,
                              const String &apiKey, const String &token);
 

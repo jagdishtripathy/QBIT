@@ -1237,49 +1237,83 @@ void networkTask(void *param) {
                     // Provider 1: Last.fm (works across Phone, Laptop, Spotify, YouTube Music)
                     String user = getMusicUser();
                     String key  = getMusicApiKey();
-                    if (user.length() > 0 && key.length() > 0) {
+                    if (user.length() == 0) {
+                        setCloudMusicStatus("Last.fm: Enter username");
+                    } else if (key.length() == 0) {
+                        setCloudMusicStatus("Last.fm: Enter API key");
+                    } else {
                         HTTPClient http;
-                        http.setTimeout(5000);
+                        http.setTimeout(4000);
                         String url = "http://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=" +
                                      user + "&api_key=" + key + "&format=json&limit=1";
                         if (http.begin(url)) {
                             int code = http.GET();
                             if (code == 200) {
-                                JsonDocument filter;
-                                filter["recenttracks"]["track"][0]["name"] = true;
-                                filter["recenttracks"]["track"][0]["artist"]["#text"] = true;
-                                filter["recenttracks"]["track"][0]["@attr"]["nowplaying"] = true;
-
                                 JsonDocument doc;
-                                if (!deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter))) {
-                                    JsonObject trk = doc["recenttracks"]["track"][0];
-                                    const char *np = trk["@attr"]["nowplaying"] | "";
-                                    bool playing = (strcmp(np, "true") == 0);
-                                    const char *title  = trk["name"] | "Now Playing";
-                                    const char *artist = trk["artist"]["#text"] | "";
+                                DeserializationError err = deserializeJson(doc, http.getStream());
+                                if (!err) {
+                                    JsonVariant trackVar = doc["recenttracks"]["track"];
+                                    JsonObject trk;
+                                    if (trackVar.is<JsonArray>()) {
+                                        trk = trackVar[0];
+                                    } else if (trackVar.is<JsonObject>()) {
+                                        trk = trackVar.as<JsonObject>();
+                                    }
+
+                                    bool playing = false;
+                                    if (trk && trk["@attr"].is<JsonObject>()) {
+                                        const char *np = trk["@attr"]["nowplaying"] | "";
+                                        if (strcmp(np, "true") == 0) playing = true;
+                                    }
+
+                                    const char *title = "Now Playing";
+                                    if (trk && trk["name"].is<const char*>()) {
+                                        title = trk["name"].as<const char*>();
+                                    }
+
+                                    const char *artist = "";
+                                    if (trk) {
+                                        if (trk["artist"].is<JsonObject>()) {
+                                            artist = trk["artist"]["#text"] | "";
+                                        } else if (trk["artist"].is<const char*>()) {
+                                            artist = trk["artist"].as<const char*>();
+                                        }
+                                    }
+
                                     String stateKey = String(playing ? "1|" : "0|") + title + "|" + artist;
                                     if (playing) {
+                                        char statBuf[64];
+                                        snprintf(statBuf, sizeof(statBuf), "Playing: %.22s", title);
+                                        setCloudMusicStatus(statBuf);
+
                                         if (stateKey != _cloudLastKey) {
                                             _cloudLastKey = stateKey;
                                             _cloudWasPlaying = true;
-                                            updateMusicState(true, title, artist, 0, 180, -1);
-                                            NetworkEvent evt = {};
-                                            evt.kind = NetworkEvent::MUSIC_UPDATE;
-                                            evt.connected = true;
-                                            xQueueSend(networkEventQueue, &evt, pdMS_TO_TICKS(10));
+                                            updateMusicState(true, title, artist, 0, 180, 0);
                                         }
-                                    } else if (_cloudWasPlaying) {
-                                        _cloudWasPlaying = false;
-                                        _cloudLastKey = stateKey;
-                                        updateMusicState(false, title, artist, 0, 180, -1);
-                                        NetworkEvent evt = {};
-                                        evt.kind = NetworkEvent::MUSIC_UPDATE;
-                                        evt.connected = false;
-                                        xQueueSend(networkEventQueue, &evt, pdMS_TO_TICKS(10));
+                                    } else {
+                                        setCloudMusicStatus("Last.fm: Connected (idle)");
+                                        if (_cloudWasPlaying) {
+                                            _cloudWasPlaying = false;
+                                            _cloudLastKey = stateKey;
+                                            updateMusicState(false, title, artist, 0, 180, 0);
+                                        }
                                     }
+                                } else {
+                                    setCloudMusicStatus("Last.fm: JSON parse error");
                                 }
+                            } else if (code == 403) {
+                                setCloudMusicStatus("Last.fm: Invalid API key (403)");
+                            } else if (code == 404) {
+                                setCloudMusicStatus("Last.fm: User not found (404)");
+                            } else {
+                                char errBuf[64];
+                                snprintf(errBuf, sizeof(errBuf), "Last.fm: HTTP %d", code);
+                                setCloudMusicStatus(errBuf);
                             }
                             http.end();
+                        } else {
+                            setCloudMusicStatus("Last.fm: Connect fail");
                         }
                     }
                 } else if (prov == 2) {
