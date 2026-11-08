@@ -493,7 +493,7 @@ static void checkFirmwareVersion() {
     Serial.println("[Version] Checking...");
     WiFiClientSecure client;
     client.setInsecure();
-    client.setTimeout(20);
+    client.setTimeout(15000);
     HTTPClient http;
     if (!http.begin(client, VERSION_CHECK_URL)) {
         Serial.println("[Version] HTTP begin failed");
@@ -550,8 +550,8 @@ static bool streamCloudOtaPartition(const char *url, int command, int pctStart, 
 
     WiFiClientSecure client;
     client.setInsecure();
-    client.setTimeout(30);
-    client.setHandshakeTimeout(30);
+    client.setTimeout(30000);       // Stream::setTimeout takes milliseconds (30s)
+    client.setHandshakeTimeout(30); // setHandshakeTimeout takes seconds (30s)
 
     HTTPClient http;
     int code = -1;
