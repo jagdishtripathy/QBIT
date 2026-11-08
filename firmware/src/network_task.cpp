@@ -538,41 +538,64 @@ static void checkFirmwareVersion() {
 //  Wireless Cloud Auto-OTA (HTTPS stream Firmware + LittleFS from GitHub Pages)
 // ==========================================================================
 static bool streamCloudOtaPartition(const char *url, int command, int pctStart, int pctSpan, const char *dlMsg) {
-    WiFiClientSecure client;
-    client.setInsecure();
-    client.setTimeout(30000);
-
-    HTTPClient http;
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    http.setTimeout(30000);
-    http.setReuse(false);
-    if (!http.begin(client, url)) {
-        strncpy(otaStatusMsg, "Connect failed", sizeof(otaStatusMsg) - 1);
-        return false;
+    if (command == U_SPIFFS) {
+        strncpy(otaStatusMsg, "Preparing LittleFS...", sizeof(otaStatusMsg) - 1);
+        gifPlayerStop();
+        vTaskDelay(pdMS_TO_TICKS(50));
+        LittleFS.end();
+        vTaskDelay(pdMS_TO_TICKS(150));
+    } else {
+        strncpy(otaStatusMsg, "Connecting to cloud...", sizeof(otaStatusMsg) - 1);
     }
 
-    int code = http.GET();
+    WiFiClientSecure client;
+    client.setInsecure();
+    client.setTimeout(30);
+    client.setHandshakeTimeout(30);
+
+    HTTPClient http;
+    int code = -1;
+    for (int attempt = 1; attempt <= 3; attempt++) {
+        if (otaCancelRequested) return false;
+        client.stop();
+        if (attempt > 1) {
+            snprintf(otaStatusMsg, sizeof(otaStatusMsg), "Retry %d/3...", attempt);
+            vTaskDelay(pdMS_TO_TICKS(800));
+        }
+        http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+        http.setConnectTimeout(20000);
+        http.setTimeout(30000);
+        http.setReuse(false);
+        if (!http.begin(client, url)) {
+            strncpy(otaStatusMsg, "Connect failed", sizeof(otaStatusMsg) - 1);
+            continue;
+        }
+        code = http.GET();
+        if (code == HTTP_CODE_OK) {
+            break;
+        }
+        Serial.printf("[OTA] GET %s attempt %d failed: %d (freeHeap=%u)\n",
+                      url, attempt, code, (unsigned)ESP.getFreeHeap());
+        http.end();
+        client.stop();
+    }
+
     if (code != HTTP_CODE_OK) {
         snprintf(otaStatusMsg, sizeof(otaStatusMsg), "HTTP error %d", code);
-        http.end();
         return false;
     }
 
     int totalLen = http.getSize();
     size_t updateSize = (totalLen > 0) ? (size_t)totalLen : UPDATE_SIZE_UNKNOWN;
 
-    if (command == U_SPIFFS) {
-        strncpy(otaStatusMsg, "Preparing LittleFS...", sizeof(otaStatusMsg) - 1);
-        gifPlayerStop();
-        vTaskDelay(pdMS_TO_TICKS(30));
-        LittleFS.end();
-    } else {
+    if (command != U_SPIFFS) {
         strncpy(otaStatusMsg, "Preparing flash...", sizeof(otaStatusMsg) - 1);
     }
 
     if (!Update.begin(updateSize, command)) {
         snprintf(otaStatusMsg, sizeof(otaStatusMsg), "Begin fail: %d", Update.getError());
         http.end();
+        client.stop();
         return false;
     }
 
@@ -583,8 +606,12 @@ static bool streamCloudOtaPartition(const char *url, int command, int pctStart, 
         strncpy(otaStatusMsg, "Out of memory", sizeof(otaStatusMsg) - 1);
         Update.abort();
         http.end();
+        client.stop();
         return false;
     }
+
+    // Raise task priority during flash streaming so I2C redraws do not starve TCP reads
+    vTaskPrioritySet(NULL, 2);
 
     size_t written = 0;
     unsigned long lastDataMs = millis();
@@ -626,6 +653,8 @@ static bool streamCloudOtaPartition(const char *url, int command, int pctStart, 
     }
     free(buf);
     http.end();
+    client.stop();
+    vTaskPrioritySet(NULL, 1);
 
     if (cancelled) {
         Update.abort();
@@ -662,8 +691,19 @@ static void performCloudOta() {
 
     otaInProgress      = true;
     otaProgressPercent = 0;
-    strncpy(otaStatusMsg, "Checking version...", sizeof(otaStatusMsg) - 1);
-    checkFirmwareVersion();
+
+    // Free WebSocket, MQTT, and GIF file buffers FIRST so mbedTLS has maximum contiguous heap
+    if (_wsClient.available()) _wsClient.close();
+    if (_mqttClient.connected()) _mqttClient.disconnect();
+    gifPlayerStop();
+    vTaskDelay(pdMS_TO_TICKS(300));
+
+    // Only query latest.json if we don't already know an update is waiting
+    if (!updateAvailable || _lastCheckedRemoteVer[0] == '\0') {
+        strncpy(otaStatusMsg, "Checking version...", sizeof(otaStatusMsg) - 1);
+        checkFirmwareVersion();
+        vTaskDelay(pdMS_TO_TICKS(500)); // Let first TLS socket & heap reclaim cleanly
+    }
 
     if (otaCancelRequested) {
         strncpy(otaStatusMsg, "Update cancelled", sizeof(otaStatusMsg) - 1);
@@ -672,13 +712,17 @@ static void performCloudOta() {
         return;
     }
 
-    Preferences otaPrefs;
-    otaPrefs.begin("qbit_ota", false);
-    String syncedFsVer = otaPrefs.getString("fs_ver", "");
+    String syncedFsVer = "";
+    {
+        Preferences otaPrefs;
+        if (otaPrefs.begin("qbit_ota", true)) {
+            syncedFsVer = otaPrefs.getString("fs_ver", "");
+            otaPrefs.end();
+        }
+    }
     bool needFsSync = (_lastCheckedRemoteVer[0] != '\0' && syncedFsVer != String(_lastCheckedRemoteVer));
 
     if (!updateAvailable && !needFsSync) {
-        otaPrefs.end();
         snprintf(otaStatusMsg, sizeof(otaStatusMsg), "Up to date! (%s)", kQbitVersion);
         Serial.printf("[OTA] Already on latest firmware & LittleFS (%s), skipping flash\n", kQbitVersion);
         vTaskDelay(pdMS_TO_TICKS(2500));
@@ -686,20 +730,14 @@ static void performCloudOta() {
         return;
     }
 
-    strncpy(otaStatusMsg, "Connecting to cloud...", sizeof(otaStatusMsg) - 1);
-    Serial.println("[OTA] Starting Cloud OTA (Firmware + LittleFS)");
-
-    // Disconnect WebSocket & MQTT during OTA to free heap and TLS memory
-    if (_wsClient.available()) _wsClient.close();
-    if (_mqttClient.connected()) _mqttClient.disconnect();
-
-    // Temporarily raise task priority to match displayTask (priority 2)
-    // so network streaming and flash writes are not starved by I2C redraws.
-    vTaskPrioritySet(NULL, 2);
+    Serial.printf("[OTA] Starting Cloud OTA (FW + LittleFS), freeHeap=%u\n", (unsigned)ESP.getFreeHeap());
 
     bool ok = true;
     if (updateAvailable) {
         ok = streamCloudOtaPartition(CLOUD_OTA_FIRMWARE_URL, U_FLASH, 0, 70, "Downloading FW...");
+        if (ok && !otaCancelRequested) {
+            vTaskDelay(pdMS_TO_TICKS(500)); // Allow FW TLS socket to close cleanly before LittleFS TLS
+        }
     }
 
     if (ok && !otaCancelRequested) {
@@ -708,20 +746,20 @@ static void performCloudOta() {
         ok = streamCloudOtaPartition(CLOUD_OTA_LITTLEFS_URL, U_SPIFFS, fsStart, fsSpan, "Updating LittleFS...");
     }
 
-    vTaskPrioritySet(NULL, 1);
-
     if (ok) {
         if (_lastCheckedRemoteVer[0] != '\0') {
-            otaPrefs.putString("fs_ver", _lastCheckedRemoteVer);
+            Preferences otaPrefs;
+            if (otaPrefs.begin("qbit_ota", false)) {
+                otaPrefs.putString("fs_ver", _lastCheckedRemoteVer);
+                otaPrefs.end();
+            }
         }
-        otaPrefs.end();
         otaProgressPercent = 100;
         strncpy(otaStatusMsg, "Success! Rebooting", sizeof(otaStatusMsg) - 1);
         Serial.println("[OTA] Cloud OTA (FW + LittleFS) complete, rebooting...");
         vTaskDelay(pdMS_TO_TICKS(1500));
         esp_restart();
     } else {
-        otaPrefs.end();
         vTaskDelay(pdMS_TO_TICKS(3000));
         otaInProgress = false;
     }
