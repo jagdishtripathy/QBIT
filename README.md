@@ -17,8 +17,9 @@
 > * **Brownout & Wi-Fi Disconnect Fix**: Capped Wi-Fi STA transmission power from 19.5 dBm to `15 dBm`, eliminating 500 mA current surges that caused battery voltage sags and continuous brownout reboot loops.
 > * **UX Improvements**: Extended local IP address display on boot from 3s to 7s, added `"Scan / Tap for text"` QR prompt, and fixed `platformio.ini` to auto-detect Windows COM ports.
 > * **Pinned Display (Desk Badge & Kiosk Mode)**: Lock a chosen `.qgif` animation on continuous loop or display custom scrolling/static text banners (e.g. nameplates, status messages like `"DO NOT DISTURB"`), with duration timers and one-tap physical dismissal.
-* **Dual-Slot Wireless OTA Updates (Cloud & Local Web)**: Dual `app0`/`app1` (1.625 MB each) partition layout enables 100% wireless over-the-air firmware updates without taking apart the sealed 3D-printed case. Features on-device Wireless Cloud Auto-OTA from GitHub Releases/Pages with version checking, live OLED progress bar, and one-tap cancellation, alongside local browser upload (`/api/ota/upload`).
-* **Lossless RLE Asset Compression**: Custom PackBits RLE compression for embedded boot/idle animations and LittleFS `.qgif` files, saving >227 KB in binary flash and shrinking animation footprint by up to 75%.
+> * **Live Music Turntable Visualizer (Mode 1 & Mode 3)**: Real-time 128×64 OLED spinning vinyl record & tonearm visualizer with marquee Song Title, Artist, progress bar, and animated equalizer bars. Supports zero-click Browser Extension sync (Spotify, YouTube Music, YouTube, SoundCloud), built-in ESP32-C3 NVS Cloud Music Polling (Last.fm & Spotify Web API with zero keys exposed in source code), and MQTT (`qbit/<id>/music`).
+> * **Dual-Slot Wireless OTA Updates (Firmware + LittleFS Auto-Sync)**: Dual `app0`/`app1` (1.625 MB each) partition layout enables 100% wireless over-the-air updates without opening the sealed 3D-printed case. Wireless Cloud Auto-OTA automatically flashes both `littlefs.bin` (web dashboard UI & animations) and `firmware.bin` in a single action with live OLED progress and one-tap cancellation.
+> * **Lossless RLE Asset Compression**: Custom PackBits RLE compression for embedded boot/idle animations and LittleFS `.qgif` files, saving >227 KB in binary flash and shrinking animation footprint by up to 75%.
 
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC_BY--NC--SA_4.0-blue.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 [![Platform](https://img.shields.io/badge/Platform-ESP32--C3-green.svg)](#hardware-requirements)
@@ -94,6 +95,16 @@ QBIT is a retro robot-style desk companion that works like a personal BB call. O
 - **Custom Text Banner**: Shows static centered text in a border frame (if <=120 px wide) or smoothly scrolls longer text horizontally (up to 64 characters)
 - **Configurable Duration**: Choose *Until Touched (Infinite)* or timed durations from 30 minutes to 7 days with live countdown and NVS reboot persistence
 - **Single-Tap Dismiss**: Tap the capacitive touch sensor at any time to instantly unpin and restore normal robot companion emotions
+
+**Live Music Turntable Visualizer**
+- Automatically switches the 128×64 OLED into a spinning vinyl record turntable with tonearm, floating musical notes, scrolling song title & artist, progress bar, and animated spectrum equalizer whenever music plays on your laptop or phone
+- **Mode 1 (Split Turntable)**: Left 46×64 px spinning vinyl disc (`r=19`) + tonearm; right 82×64 px bold scrolling song title, artist, track progress bar, and 9-band equalizer
+- **Mode 3 (Auto-Flip View)**: Alternates every 4 seconds between a full-screen vinyl turntable (`r=24`) with stereo equalizer bars and a full-screen Now Playing track card
+- **Randomize Mode**: Automatically alternates between Mode 1 and Mode 3 every 16 seconds; tap the touch sensor once to manually flip layouts, or double-tap to exit back to robot companion mode
+- **3 Sync Methods (Zero API Keys in Source Code)**:
+  1. **QBIT Live Music Sync Browser Extension (Chrome / Edge / Brave)**: Automatically detects playback from Spotify Web, YouTube Music, YouTube, SoundCloud, Apple Music, JioSaavn, Gaana, and any audible browser tab
+  2. **ESP32-C3 Built-in Cloud Polling (Last.fm & Spotify Web API)**: Credentials are entered in the local `http://qbit.local` dashboard and stored strictly in ESP32-C3 NVS flash (`Preferences`) — works with both phone and PC playback even when the browser is closed
+  3. **MQTT (`qbit/<id>/music`) & Local REST API (`/api/music`)**: Push track metadata from Home Assistant, Tasker, or custom scripts
 
 **Poke Notifications**
 - Receive poke messages from other QBIT users on the network
@@ -271,28 +282,37 @@ The **Pinned Display** section in the local dashboard (`http://qbit.local`) turn
    - **On Device**: Simply tap the capacitive touch sensor once. QBIT will play a touch chirp (if sound is enabled), instantly exit pinned mode, and resume normal robot emotions.
    - **From Dashboard**: Click the **Unpin / Stop** button.
 
+#### How to Use Live Music Turntable Visualizer
+
+The **Live Music** card in `http://qbit.local` lets you configure how QBIT detects and displays music playing on your laptop or phone:
+
+1. **Choose Layout**: Select **Randomize (Mode 1 & Mode 3)**, **Mode 1: Split Turntable**, or **Mode 3: Auto-Flip View**.
+2. **Choose Auto Sync Source**:
+   - **Browser Extension / MQTT**: Install the **QBIT Live Music Sync** Chrome/Edge extension to automatically sync any music playing in your browser (Spotify Web, YouTube Music, YouTube, SoundCloud, etc.) with zero clicks.
+   - **Last.fm Cloud (Phone & PC — Works with Free Spotify)**: Enter your Last.fm Username and API Key and click **Save Sync Config**. Credentials are saved strictly inside your ESP32-C3's NVS flash (never exposed in code or returned over HTTP). QBIT polls Last.fm every 6 seconds and animates songs played on your phone or PC.
+   - **Spotify Web API (Cloud — Requires Spotify Premium)**: Enter your Spotify Client ID, Client Secret, and Refresh Token to poll `/v1/me/player/currently-playing` directly from the ESP32-C3.
+
 ---
 
 ### Wireless Firmware Updates (OTA)
 
-Since QBIT is sealed inside a 3D-printed enclosure with only the TP4056 charging port exposed, all firmware updates can be performed completely wirelessly via two methods:
+Since QBIT is sealed inside a 3D-printed enclosure with only the TP4056 charging port exposed, all firmware and filesystem (`littlefs.bin`) updates can be performed completely wirelessly via two methods:
 
-#### Method 1: On-Device Wireless Cloud Auto-OTA (Recommended)
-1. **Open Root Menu**: Long-press the capacitive touch sensor until the menu appears.
-2. **Select OTA UPDATE**: Tap repeatedly to scroll past `SETTING` to **`OTA UPDATE`**, then long-press to enter.
-3. **Version Check**: QBIT connects to Wi-Fi and queries the GitHub release server (`latest.json`):
+#### Method 1: On-Device or Dashboard Wireless Cloud Auto-OTA (Recommended)
+1. **Trigger Update**: Click **WIRELESS UPDATE** on the `http://qbit.local` dashboard, or long-press the touch sensor on QBIT and select **`OTA UPDATE`**.
+2. **Version Check**: QBIT connects to Wi-Fi and queries the GitHub release server (`latest.json`):
    - If already on the latest version, it displays `"Up to date! (vX.Y.Z)"` and exits safely.
-   - If a newer version is available, it shows the current version and new version prompt.
-4. **Download & Flash**: Tap to confirm. QBIT downloads the new firmware over HTTPS with a live OLED progress bar (`"Downloading XX%"`).
-5. **Cancel Anytime**: Tap the touch sensor at any time during download to cancel safely.
-6. **Automatic Reboot**: Upon successful download and cryptographic validation, QBIT automatically swaps the active boot slot and reboots into the new firmware.
+   - If a newer version is available, it begins the update automatically.
+3. **Automatic LittleFS + Firmware Flash**: QBIT first downloads and flashes `littlefs.bin` (`U_SPIFFS` — updating the web dashboard UI and built-in animations), followed immediately by `firmware.bin` (`U_FLASH`) with a live OLED progress bar (`"Updating FS XX%"` -> `"Downloading XX%"`).
+4. **Cancel Anytime**: Tap the touch sensor at any time during download to cancel safely.
+5. **Automatic Reboot**: Upon successful download and verification, QBIT switches the active boot slot and reboots into the new firmware.
 
 #### Method 2: Local Web Dashboard OTA (Offline / Custom Builds)
 1. Connect to the same Wi-Fi network as your QBIT.
 2. Navigate to `http://qbit.local` (or your device's IP address) in your web browser.
-3. Scroll to the **Firmware Update (OTA)** section.
-4. Choose your `.bin` file (`firmware.bin` or filesystem `littlefs.bin`).
-5. Click **Flash Firmware / Upload**. A live upload bar will show progress, and QBIT will reboot automatically upon completion.
+3. Scroll to the **OTA Update (.bin)** section.
+4. Choose your `.bin` file (`firmware.bin` or filesystem `littlefs.bin` — QBIT automatically detects filesystem images by filename or `littlefs` magic header).
+5. Click **Flash .bin Wirelessly**. A live upload bar will show progress, and QBIT will reboot automatically upon completion.
 
 ---
 
@@ -426,6 +446,7 @@ Once connected, the device publishes HA discovery payloads that automatically cr
 | `qbit/<id>/touch` | Pub | Touch event JSON (`type`: gesture type) |
 | `qbit/<id>/animation/state` | Pub | Currently playing animation filename (retained) |
 | `qbit/<id>/animation/next` | Sub | Trigger switch to next animation (no payload) |
+| `qbit/<id>/music` | Sub | Live music turntable JSON: `{"playing":true,"title":"...","artist":"...","progress":42,"duration":210,"style":0}` |
 
 </details>
 

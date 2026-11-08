@@ -17,8 +17,9 @@
 > * **Wi-Fi 掉線與重啟修復**：限制 Wi-Fi STA 發射功率至 `15 dBm`，消除 500mA 峰值突波導致的電池電壓驟降與 Brownout 循環重開機。
 > * **體驗優化**：延長開機 IP 顯示時間（3 秒至 7 秒），QR code 增加點擊切換文字提示，並支援 Windows COM port 自動偵測。
 > * **固定顯示功能（Pinned Display 桌上名牌與展覽模式）**：可鎖定特定 `.qgif` 動畫持續循環播放，或顯示自訂靜態/捲動文字橫幅（例如桌上名牌、`"DO NOT DISTURB"` 狀態提示），支援倒數定時器與觸控感測器單擊即刻解除。
-* **雙槽無線 OTA 升級（Cloud 雲端與 Local 網頁）**：雙 `app0`/`app1`（各 1.625 MB）分區架構，無需拆開 3D 列印外殼即可 100% 無線升級韌體。包含機上選單直接連線 GitHub Releases/Pages 雲端自動 OTA（支援版本比對、OLED 即時進度條、單擊取消），以及區域網路瀏覽器直接上傳二進位檔（`/api/ota/upload`）。
-* **無損 RLE 資源壓縮**：開機/閒置內嵌動畫與 LittleFS `.qgif` 檔案均採用 PackBits RLE 壓縮，為二進位檔節省超過 227 KB 快閃記憶體，並縮減動畫檔案體積達 75% 以上。
+> * **即時黑膠唱機音樂視覺化（Mode 1 與 Mode 3）**：在 128×64 OLED 螢幕上呈現旋轉黑膠唱片、唱臂、跑馬燈歌名／演出者、進度條與動態頻譜。支援瀏覽器擴充功能自動同步（Spotify、YouTube Music、YouTube 等）、ESP32-C3 內建 NVS 雲端音樂輪詢（Last.fm 與 Spotify Web API，金鑰僅儲存在晶片 NVS 絕不外洩至原始碼）以及 MQTT（`qbit/<id>/music`）。
+> * **雙槽無線 OTA 升級（韌體 + LittleFS 自動同步）**：雙 `app0`/`app1`（各 1.625 MB）分區架構，無需拆開 3D 列印外殼即可 100% 無線自動同步更新 `littlefs.bin`（網頁介面與動畫）與 `firmware.bin`，支援 OLED 即時進度條與單擊取消。
+> * **無損 RLE 資源壓縮**：開機/閒置內嵌動畫與 LittleFS `.qgif` 檔案均採用 PackBits RLE 壓縮，為二進位檔節省超過 227 KB 快閃記憶體，並縮減動畫檔案體積達 75% 以上。
 
 [![License: CC BY-NC-SA 4.0](https://img.shields.io/badge/License-CC_BY--NC--SA_4.0-blue.svg)](https://creativecommons.org/licenses/by-nc-sa/4.0/)
 [![Platform](https://img.shields.io/badge/Platform-ESP32--C3-green.svg)](#硬體需求)
@@ -94,6 +95,12 @@ QBIT 是一款復古機器人造型的桌面陪伴裝置，就像專屬的 BB Ca
 - **自訂文字橫幅**：短文字（<=120 像素）會置中並帶有裝飾圓角外框；長文字（最多 64 字元）則會自動平滑水平捲動（例如：`"BUSY - CODING"`、`"請勿打擾"`、個人名稱）
 - **定時與斷電記憶**：可設定「直到觸碰（無限期）」或 30 分鐘至 7 天的定時倒數，狀態與剩餘秒數即時儲存於 NVS，重新開機後自動恢復
 - **單擊即刻解除**：隨時輕觸機身觸控感測器即可立即退出固定模式，恢復機器人隨機心情表情
+
+**即時黑膠唱機音樂顯示（Live Music Turntable Visualizer）**
+- 當電腦或手機播放音樂時，128×64 OLED 自動切換為旋轉黑膠唱機、唱臂、音符、捲動歌名／歌手、播放進度條與動態等化器
+- **Mode 1（分割黑膠視圖）**：左側旋轉黑膠唱片與唱臂，右側顯示粗體歌名、歌手、進度條與 9 段等化器
+- **Mode 3（自動翻頁視圖）**：每 4 秒於全螢幕黑膠唱機與全螢幕曲目資訊卡之間自動切換
+- **三種同步方式（零金鑰外洩）**：支援 Chrome/Edge 瀏覽器擴充功能、ESP32-C3 內建 NVS 雲端輪詢（Last.fm / Spotify Web API）與 MQTT（`qbit/<id>/music`）
 
 **戳一下通知**
 - 接收來自網路上其他 QBIT 使用者的 poke 訊息
