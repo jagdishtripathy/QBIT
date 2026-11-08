@@ -179,16 +179,36 @@
       </select>
     </div>
     <div class="setting">
+      <label class="setting-label">Auto Sync</label>
+      <select id="musicProviderSelect" class="input-select">
+        <option value="0" selected>Browser Extension / MQTT</option>
+        <option value="1">Last.fm Cloud (Phone &amp; PC)</option>
+        <option value="2">Spotify Web API (Cloud)</option>
+      </select>
+    </div>
+    <div class="setting" id="musicCloudUserRow" style="display:none">
+      <label class="setting-label" id="musicCloudUserLabel">Username</label>
+      <input type="text" id="musicCloudUser" class="input-text" maxlength="128" autocomplete="off" placeholder="Last.fm username">
+    </div>
+    <div class="setting" id="musicCloudKeyRow" style="display:none">
+      <label class="setting-label" id="musicCloudKeyLabel">API Key</label>
+      <input type="password" id="musicCloudKey" class="input-text" maxlength="128" autocomplete="new-password" placeholder="Stored securely on ESP32 NVS">
+    </div>
+    <div class="setting" id="musicCloudTokenRow" style="display:none">
+      <label class="setting-label">Refresh Token</label>
+      <input type="password" id="musicCloudToken" class="input-text" maxlength="256" autocomplete="new-password" placeholder="Spotify Refresh Token (NVS)">
+    </div>
+    <div class="setting">
       <label class="setting-label">Song</label>
-      <input type="text" id="musicTitleInput" class="input-text" maxlength="64" placeholder="Song title (auto-detected from tab)">
+      <input type="text" id="musicTitleInput" class="input-text" maxlength="64" placeholder="Auto-synced song title">
     </div>
     <div class="setting">
       <label class="setting-label">Artist</label>
-      <input type="text" id="musicArtistInput" class="input-text" maxlength="64" placeholder="Artist name">
+      <input type="text" id="musicArtistInput" class="input-text" maxlength="64" placeholder="Auto-synced artist">
     </div>
     <div class="device-actions" style="margin-top:8px">
-      <button class="btn btn-save" id="btnMusicTabSync" type="button">Sync Browser Tab Audio</button>
-      <button class="btn btn-secondary" id="btnMusicNativeSend" type="button">Send to QBIT</button>
+      <button class="btn btn-save" id="btnMusicSaveConfig" type="button">Save Sync Config</button>
+      <button class="btn btn-secondary" id="btnMusicNativeSend" type="button">Test Track</button>
       <button class="btn btn-del" id="btnMusicStop" type="button">Stop</button>
     </div>
     <div class="msg" id="musicMsg"></div>

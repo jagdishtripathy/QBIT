@@ -80,6 +80,12 @@ static String   _pinnedTarget     = "";
 static uint32_t _pinnedDuration   = 0;
 static uint32_t _pinnedStartEpoch = 0;
 
+// Cloud Music Polling (stored exclusively in NVS)
+static uint8_t  _musicProvider    = 0;
+static String   _musicUser        = "";
+static String   _musicApiKey      = "";
+static String   _musicToken       = "";
+
 // ==========================================================================
 //  Time format (24h/12h)
 // ==========================================================================
@@ -208,6 +214,12 @@ void loadSettings() {
     _pinnedDuration   = _prefs.getUInt("pinDur",    0);
     _pinnedStartEpoch = _prefs.getUInt("pinEpoch",  0);
 
+    // Cloud music polling settings (stored only in NVS)
+    _musicProvider    = _prefs.getUChar("musProv",  0);
+    _musicUser        = _prefs.getString("musUser", "");
+    _musicApiKey      = _prefs.getString("musKey",  "");
+    _musicToken       = _prefs.getString("musTok",  "");
+
     xSemaphoreGive(_prefsMutex);
 
     // Apply speed
@@ -259,6 +271,11 @@ void saveSettings() {
     _prefs.putString("pinTgt",   _pinnedTarget);
     _prefs.putUInt("pinDur",     _pinnedDuration);
     _prefs.putUInt("pinEpoch",   _pinnedStartEpoch);
+    // Cloud music polling
+    _prefs.putUChar("musProv",   _musicProvider);
+    _prefs.putString("musUser",  _musicUser);
+    _prefs.putString("musKey",   _musicApiKey);
+    _prefs.putString("musTok",   _musicToken);
     xSemaphoreGive(_prefsMutex);
     Serial.println("Settings saved to NVS");
 }
@@ -506,4 +523,30 @@ uint32_t getPinnedRemainingSeconds() {
     uint32_t elapsed = nowSec - _pinnedStartEpoch;
     if (elapsed >= _pinnedDuration) return 0;
     return _pinnedDuration - elapsed;
+}
+
+uint8_t getMusicProvider() { return _musicProvider; }
+String  getMusicUser()     { return _musicUser; }
+String  getMusicApiKey()   { return _musicApiKey; }
+String  getMusicToken()    { return _musicToken; }
+
+void setMusicCloudConfig(uint8_t provider, const String &user,
+                         const String &apiKey, const String &token) {
+    if (_prefsReady && xSemaphoreTake(_prefsMutex, portMAX_DELAY) == pdTRUE) {
+        _musicProvider = provider;
+        _musicUser     = user;
+        if (apiKey.length() > 0 && apiKey != "********") {
+            _musicApiKey = apiKey;
+        } else if (provider == 0) {
+            // Keep existing key unless explicitly cleared
+        }
+        if (token.length() > 0 && token != "********") {
+            _musicToken = token;
+        }
+        _prefs.putUChar("musProv",  _musicProvider);
+        _prefs.putString("musUser", _musicUser);
+        _prefs.putString("musKey",  _musicApiKey);
+        _prefs.putString("musTok",  _musicToken);
+        xSemaphoreGive(_prefsMutex);
+    }
 }

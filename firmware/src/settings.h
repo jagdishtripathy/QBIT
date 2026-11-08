@@ -129,4 +129,13 @@ uint32_t getPinnedStartEpoch();
 void     setPinnedStartEpoch(uint32_t epoch);
 uint32_t getPinnedRemainingSeconds();
 
+// --- Cloud Music Polling (Stored in NVS only — never in source/GitHub) ---
+// provider: 0 = Off (Extension/MQTT only), 1 = Last.fm, 2 = Spotify Web API
+uint8_t  getMusicProvider();
+String   getMusicUser();
+String   getMusicApiKey();
+String   getMusicToken();
+void     setMusicCloudConfig(uint8_t provider, const String &user,
+                             const String &apiKey, const String &token);
+
 #endif // SETTINGS_H

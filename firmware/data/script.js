@@ -1977,9 +1977,18 @@ pollCurrent();
   var statusPill       = document.getElementById('musicStatusPill');
   var modeLabel        = document.getElementById('musicModeLabel');
   var styleSelect      = document.getElementById('musicStyleSelect');
+  var providerSelect   = document.getElementById('musicProviderSelect');
+  var cloudUserRow     = document.getElementById('musicCloudUserRow');
+  var cloudKeyRow      = document.getElementById('musicCloudKeyRow');
+  var cloudTokenRow    = document.getElementById('musicCloudTokenRow');
+  var cloudUserLabel   = document.getElementById('musicCloudUserLabel');
+  var cloudKeyLabel    = document.getElementById('musicCloudKeyLabel');
+  var cloudUserInput   = document.getElementById('musicCloudUser');
+  var cloudKeyInput    = document.getElementById('musicCloudKey');
+  var cloudTokenInput  = document.getElementById('musicCloudToken');
   var titleInput       = document.getElementById('musicTitleInput');
   var artistInput      = document.getElementById('musicArtistInput');
-  var btnTabSync       = document.getElementById('btnMusicTabSync');
+  var btnSaveConfig    = document.getElementById('btnMusicSaveConfig');
   var btnNativeSend    = document.getElementById('btnMusicNativeSend');
   var btnStop          = document.getElementById('btnMusicStop');
   var msgEl            = document.getElementById('musicMsg');
@@ -1989,19 +1998,11 @@ pollCurrent();
   var W = 128, H = 64;
   var ctx = previewCanvas.getContext('2d');
   var vbuf = new Uint8Array(W * H);
-  var packedBuf = new Uint8Array(1024);
   var imgData = ctx.createImageData(W * 2, H * 2);
 
   var activeLayout = 1; // 1 = Mode 1 (Split), 3 = Mode 3 (Auto-Flip)
   var lastSwitchMs = Date.now();
   var tick = 0;
-
-  var audioCtx = null;
-  var analyser = null;
-  var freqData = null;
-  var mediaStream = null;
-  var ws = null;
-  var streaming = false;
 
   var FONT5x7 = {
     ' ': [0x00,0x00,0x00,0x00,0x00], '!': [0x00,0x00,0x5F,0x00,0x00],
@@ -2116,15 +2117,6 @@ pollCurrent();
   }
 
   function getBandLevel(bandIdx, totalBands, maxH) {
-    if (analyser && freqData) {
-      analyser.getByteFrequencyData(freqData);
-      var binStart = Math.floor((bandIdx / totalBands) * (freqData.length * 0.65));
-      var binEnd = Math.max(binStart + 1, Math.floor(((bandIdx + 1) / totalBands) * (freqData.length * 0.65)));
-      var sum = 0;
-      for (var i = binStart; i < binEnd; i++) sum += freqData[i];
-      var avg = sum / (binEnd - binStart);
-      return Math.max(3, Math.min(maxH, Math.round((avg / 255) * maxH)));
-    }
     return 3 + Math.round(Math.abs(Math.sin(tick * 0.28 + bandIdx * 0.85)) * (maxH - 3));
   }
 
@@ -2225,119 +2217,83 @@ pollCurrent();
       }
     }
     ctx.putImageData(imgData, 0, 0);
-
-    // If streaming live over /ws_cam, pack 1024-byte QGIF frame (0=lit, 1=dark)
-    if (streaming && ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount === 0) {
-      for (var byteIdx = 0; byteIdx < 1024; byteIdx++) {
-        var bVal = 0xFF;
-        var basePx = byteIdx * 8;
-        for (var bit = 0; bit < 8; bit++) {
-          if (vbuf[basePx + bit]) bVal &= ~(0x80 >> bit);
-        }
-        packedBuf[byteIdx] = bVal;
-      }
-      ws.send(packedBuf.buffer);
-    }
-
     tick++;
   }
 
-  function parseTabLabel(label) {
-    if (!label) return;
-    // Ignore Chrome internal capture stream identifiers (e.g. web-contents-media-stream://...)
-    if (/^(web-contents-media-stream:|window:|screen:|tab$|system audio|default|communications)/i.test(label.trim())) {
-      return;
-    }
-    var cleaned = label
-      .replace(/\s*[-|•]\s*(YouTube Music|YouTube|Spotify|SoundCloud|Apple Music).*$/i, '')
-      .trim();
-    if (!cleaned) return;
-    var parts = cleaned.split(/\s+[-•]\s+/);
-    if (parts.length >= 2) {
-      titleInput.value = parts[0].trim();
-      artistInput.value = parts.slice(1).join(' - ').trim();
-    } else {
-      titleInput.value = cleaned;
-      artistInput.value = '';
+  function updateProviderFields() {
+    if (!providerSelect) return;
+    var p = parseInt(providerSelect.value, 10) || 0;
+    if (p === 0) {
+      if (cloudUserRow) cloudUserRow.style.display = 'none';
+      if (cloudKeyRow) cloudKeyRow.style.display = 'none';
+      if (cloudTokenRow) cloudTokenRow.style.display = 'none';
+    } else if (p === 1) {
+      if (cloudUserRow) cloudUserRow.style.display = '';
+      if (cloudKeyRow) cloudKeyRow.style.display = '';
+      if (cloudTokenRow) cloudTokenRow.style.display = 'none';
+      if (cloudUserLabel) cloudUserLabel.textContent = 'Last.fm User';
+      if (cloudKeyLabel) cloudKeyLabel.textContent = 'Last.fm API Key';
+      if (cloudUserInput) cloudUserInput.placeholder = 'Your Last.fm username';
+    } else if (p === 2) {
+      if (cloudUserRow) cloudUserRow.style.display = '';
+      if (cloudKeyRow) cloudKeyRow.style.display = '';
+      if (cloudTokenRow) cloudTokenRow.style.display = '';
+      if (cloudUserLabel) cloudUserLabel.textContent = 'Client ID';
+      if (cloudKeyLabel) cloudKeyLabel.textContent = 'Client Secret';
+      if (cloudUserInput) cloudUserInput.placeholder = 'Spotify Client ID';
     }
   }
 
-  function stopStreamOnly() {
-    streaming = false;
-    if (ws) { try { ws.close(); } catch (e) {} ws = null; }
-    if (mediaStream) {
-      mediaStream.getTracks().forEach(function (t) { t.stop(); });
-      mediaStream = null;
-    }
-    if (audioCtx) { try { audioCtx.close(); } catch (e) {} audioCtx = null; }
-    analyser = null;
-    freqData = null;
-    if (btnTabSync) btnTabSync.textContent = 'Sync Browser Tab Audio';
+  if (providerSelect) {
+    providerSelect.addEventListener('change', updateProviderFields);
   }
 
-  if (btnTabSync) {
-    btnTabSync.addEventListener('click', function () {
-      if (streaming) {
-        stopStreamOnly();
-        statusPill.textContent = 'OFF';
-        statusPill.className = 'pill pill-status';
-        showMusicMsg('Browser audio stream stopped.', false);
-        return;
-      }
-
-      if (!window.isSecureContext || !navigator.mediaDevices) {
-        var host = 'http://' + window.location.host;
-        showMusicMsg(
-          'Browser blocks tab audio on HTTP. Enable chrome://flags/#unsafely-treat-insecure-origin-as-secure for ' +
-          host + ' or use Send to QBIT / tools/qbit_music_sync.ps1.',
-          true
-        );
-        return;
-      }
-
-      var mediaPromise = navigator.mediaDevices.getDisplayMedia
-        ? navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
-        : navigator.mediaDevices.getUserMedia({ audio: true });
-
-      mediaPromise.then(function (stream) {
-        mediaStream = stream;
-        var vTracks = stream.getVideoTracks();
-        if (vTracks.length > 0 && vTracks[0].label) {
-          parseTabLabel(vTracks[0].label);
+  function loadMusicConfig() {
+    fetch('/api/music/config')
+      .then(function (r) { return r.json(); })
+      .then(function (cfg) {
+        if (!cfg) return;
+        if (providerSelect && typeof cfg.provider === 'number') {
+          providerSelect.value = String(cfg.provider);
         }
-        var aTracks = stream.getAudioTracks();
-        if (aTracks.length > 0) {
-          if (!vTracks.length && aTracks[0].label) parseTabLabel(aTracks[0].label);
-          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-          var src = audioCtx.createMediaStreamSource(new MediaStream([aTracks[0]]));
-          analyser = audioCtx.createAnalyser();
-          analyser.fftSize = 64;
-          freqData = new Uint8Array(analyser.frequencyBinCount);
-          src.connect(analyser);
+        if (cloudUserInput && cfg.user) {
+          cloudUserInput.value = cfg.user;
         }
+        if (cloudKeyInput && cfg.has_key) {
+          cloudKeyInput.placeholder = 'Saved in ESP32 NVS (leave blank to keep)';
+        }
+        if (cloudTokenInput && cfg.has_token) {
+          cloudTokenInput.placeholder = 'Saved in ESP32 NVS (leave blank to keep)';
+        }
+        updateProviderFields();
+      })
+      .catch(function () {});
+  }
+  loadMusicConfig();
 
-        var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-        ws = new WebSocket(proto + '//' + location.host + '/ws_cam');
-        ws.binaryType = 'arraybuffer';
-        ws.onopen = function () {
-          streaming = true;
-          statusPill.textContent = 'LIVE FFT';
-          statusPill.className = 'pill pill-status pill-ok';
-          btnTabSync.textContent = 'Stop Tab Sync';
-          showMusicMsg('Streaming live vinyl + audio spectrum to QBIT!', false);
-        };
-        ws.onclose = function () {
-          if (streaming) stopStreamOnly();
-        };
-      }).catch(function (err) {
-        showMusicMsg('Audio capture cancelled or unavailable (' + err.message + ')', true);
-      });
+  if (btnSaveConfig) {
+    btnSaveConfig.addEventListener('click', function () {
+      var params = new URLSearchParams();
+      params.set('provider', providerSelect ? providerSelect.value : '0');
+      params.set('user', cloudUserInput ? cloudUserInput.value.trim() : '');
+      params.set('key', cloudKeyInput ? cloudKeyInput.value.trim() : '');
+      params.set('token', cloudTokenInput ? cloudTokenInput.value.trim() : '');
+      fetch('/api/music/config?' + params.toString(), { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function () {
+          if (cloudKeyInput) cloudKeyInput.value = '';
+          if (cloudTokenInput) cloudTokenInput.value = '';
+          loadMusicConfig();
+          showMusicMsg('Music sync configuration saved securely to ESP32 NVS!', false);
+        })
+        .catch(function () {
+          showMusicMsg('Failed to save music configuration', true);
+        });
     });
   }
 
   if (btnNativeSend) {
     btnNativeSend.addEventListener('click', function () {
-      stopStreamOnly();
       var params = new URLSearchParams();
       params.set('playing', '1');
       params.set('title', (titleInput.value || '').trim() || 'Blinding Lights');
@@ -2358,7 +2314,6 @@ pollCurrent();
 
   if (btnStop) {
     btnStop.addEventListener('click', function () {
-      stopStreamOnly();
       fetch('/api/music?playing=0', { method: 'POST' })
         .then(function () {
           statusPill.textContent = 'OFF';
@@ -2387,10 +2342,7 @@ pollCurrent();
         if (d.artist !== undefined && document.activeElement !== artistInput) {
           artistInput.value = d.artist;
         }
-        if (streaming) {
-          statusPill.textContent = 'LIVE FFT';
-          statusPill.className = 'pill pill-status pill-ok';
-        } else if (d.playing) {
+        if (d.playing) {
           statusPill.textContent = 'ON DEVICE';
           statusPill.className = 'pill pill-status pill-ok';
         } else {
@@ -2404,7 +2356,7 @@ pollCurrent();
   setInterval(pollMusicStatus, 2000);
 
   setInterval(function () {
-    if (!musicCard.classList.contains('collapsed') || streaming) {
+    if (!musicCard.classList.contains('collapsed')) {
       renderFrame();
     }
   }, 60);

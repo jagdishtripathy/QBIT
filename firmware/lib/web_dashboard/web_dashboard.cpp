@@ -837,7 +837,14 @@ static void handlePostPinned(AsyncWebServerRequest *request) {
 //  Handlers -- Live Music API (/api/music)
 // ==========================================================================
 
+static void handleGetMusicConfig(AsyncWebServerRequest *request);
+static void handlePostMusicConfig(AsyncWebServerRequest *request);
+
 static void handleGetMusic(AsyncWebServerRequest *request) {
+    if (request->url() == "/api/music/config") {
+        handleGetMusicConfig(request);
+        return;
+    }
     StaticJsonDocument<256> doc;
     doc["playing"]  = musicState.playing;
     doc["title"]    = musicState.title;
@@ -845,12 +852,19 @@ static void handleGetMusic(AsyncWebServerRequest *request) {
     doc["progress"] = musicState.progressSec;
     doc["duration"] = musicState.durationSec;
     doc["style"]    = musicState.style;
+    doc["provider"] = getMusicProvider();
     String json;
     serializeJson(doc, json);
-    request->send(200, "application/json", json);
+    AsyncWebServerResponse *res = request->beginResponse(200, "application/json", json);
+    res->addHeader("Access-Control-Allow-Origin", "*");
+    request->send(res);
 }
 
 static void handlePostMusic(AsyncWebServerRequest *request) {
+    if (request->url() == "/api/music/config") {
+        handlePostMusicConfig(request);
+        return;
+    }
     bool     playing  = musicState.playing;
     String   title    = musicState.title;
     String   artist   = musicState.artist;
@@ -882,6 +896,44 @@ static void handlePostMusic(AsyncWebServerRequest *request) {
 
     updateMusicState(playing, title.c_str(), artist.c_str(), progress, duration, style);
     handleGetMusic(request);
+}
+
+static void handleGetMusicConfig(AsyncWebServerRequest *request) {
+    StaticJsonDocument<256> doc;
+    doc["provider"]  = getMusicProvider();
+    doc["user"]      = getMusicUser();
+    doc["has_key"]   = (getMusicApiKey().length() > 0);
+    doc["has_token"] = (getMusicToken().length() > 0);
+    String json;
+    serializeJson(doc, json);
+    request->send(200, "application/json", json);
+}
+
+static void handlePostMusicConfig(AsyncWebServerRequest *request) {
+    uint8_t provider = getMusicProvider();
+    String  user     = getMusicUser();
+    String  apiKey   = "";
+    String  token    = "";
+
+    String val;
+    if (getParamValue(request, "provider", val)) {
+        provider = (uint8_t)val.toInt();
+    }
+    if (getParamValue(request, "user", val)) {
+        val.trim();
+        user = val;
+    }
+    if (getParamValue(request, "api_key", val)) {
+        val.trim();
+        apiKey = val;
+    }
+    if (getParamValue(request, "token", val)) {
+        val.trim();
+        token = val;
+    }
+
+    setMusicCloudConfig(provider, user, apiKey, token);
+    handleGetMusicConfig(request);
 }
 
 // ==========================================================================
@@ -1169,6 +1221,8 @@ void webDashboardInit(AsyncWebServer &server) {
     server.on("/api/weather",       HTTP_POST, handlePostWeather);
     server.on("/api/pinned",        HTTP_GET,  handleGetPinned);
     server.on("/api/pinned",        HTTP_POST, handlePostPinned);
+    server.on("/api/music/config",  HTTP_GET,  handleGetMusicConfig);
+    server.on("/api/music/config",  HTTP_POST, handlePostMusicConfig);
     server.on("/api/music",         HTTP_GET,  handleGetMusic);
     server.on("/api/music",         HTTP_POST, handlePostMusic);
     server.on("/api/ota/status",    HTTP_GET,  handleGetOtaStatus);

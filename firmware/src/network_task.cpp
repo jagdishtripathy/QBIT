@@ -1224,6 +1224,143 @@ void networkTask(void *param) {
                 _versionCheckAfterMs = 0;
         }
 
+        // --- Cloud Music Polling (Last.fm / Spotify via NVS credentials) ---
+        if (!otaInProgress && getMusicProvider() != 0 && _wifiConnected && WiFi.status() == WL_CONNECTED) {
+            static unsigned long _lastCloudMusicPollMs = 0;
+            if (millis() - _lastCloudMusicPollMs >= 6000) {
+                _lastCloudMusicPollMs = millis();
+                uint8_t prov = getMusicProvider();
+                static bool _cloudWasPlaying = false;
+                static String _cloudLastKey = "";
+
+                if (prov == 1) {
+                    // Provider 1: Last.fm (works across Phone, Laptop, Spotify, YouTube Music)
+                    String user = getMusicUser();
+                    String key  = getMusicApiKey();
+                    if (user.length() > 0 && key.length() > 0) {
+                        HTTPClient http;
+                        http.setTimeout(5000);
+                        String url = "http://ws.audioscrobbler.com/2.0/?method=user.getrecenttracks&user=" +
+                                     user + "&api_key=" + key + "&format=json&limit=1";
+                        if (http.begin(url)) {
+                            int code = http.GET();
+                            if (code == 200) {
+                                JsonDocument filter;
+                                filter["recenttracks"]["track"][0]["name"] = true;
+                                filter["recenttracks"]["track"][0]["artist"]["#text"] = true;
+                                filter["recenttracks"]["track"][0]["@attr"]["nowplaying"] = true;
+
+                                JsonDocument doc;
+                                if (!deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter))) {
+                                    JsonObject trk = doc["recenttracks"]["track"][0];
+                                    const char *np = trk["@attr"]["nowplaying"] | "";
+                                    bool playing = (strcmp(np, "true") == 0);
+                                    const char *title  = trk["name"] | "Now Playing";
+                                    const char *artist = trk["artist"]["#text"] | "";
+                                    String stateKey = String(playing ? "1|" : "0|") + title + "|" + artist;
+                                    if (playing) {
+                                        if (stateKey != _cloudLastKey) {
+                                            _cloudLastKey = stateKey;
+                                            _cloudWasPlaying = true;
+                                            updateMusicState(true, title, artist, 0, 180, -1);
+                                            NetworkEvent evt = {};
+                                            evt.kind = NetworkEvent::MUSIC_UPDATE;
+                                            evt.connected = true;
+                                            xQueueSend(networkEventQueue, &evt, pdMS_TO_TICKS(10));
+                                        }
+                                    } else if (_cloudWasPlaying) {
+                                        _cloudWasPlaying = false;
+                                        _cloudLastKey = stateKey;
+                                        updateMusicState(false, title, artist, 0, 180, -1);
+                                        NetworkEvent evt = {};
+                                        evt.kind = NetworkEvent::MUSIC_UPDATE;
+                                        evt.connected = false;
+                                        xQueueSend(networkEventQueue, &evt, pdMS_TO_TICKS(10));
+                                    }
+                                }
+                            }
+                            http.end();
+                        }
+                    }
+                } else if (prov == 2) {
+                    // Provider 2: Spotify Web API (Bearer token or Refresh Token in NVS)
+                    static String _spAccessToken = "";
+                    String clientId     = getMusicUser();
+                    String clientSecret = getMusicApiKey();
+                    String tokenCfg     = getMusicToken();
+                    if (_spAccessToken.length() == 0 && tokenCfg.length() > 0) {
+                        _spAccessToken = tokenCfg;
+                    }
+                    if (_spAccessToken.length() > 0) {
+                        WiFiClientSecure sClient;
+                        sClient.setInsecure();
+                        sClient.setTimeout(8000);
+                        HTTPClient http;
+                        http.setTimeout(8000);
+                        if (http.begin(sClient, "https://api.spotify.com/v1/me/player/currently-playing")) {
+                            http.addHeader("Authorization", "Bearer " + _spAccessToken);
+                            int code = http.GET();
+                            if (code == 401 && clientId.length() > 0 && clientSecret.length() > 0 && tokenCfg.length() > 0) {
+                                http.end();
+                                // Refresh expired Spotify access token using NVS refresh_token
+                                if (http.begin(sClient, "https://accounts.spotify.com/api/token")) {
+                                    http.addHeader("Content-Type", "application/x-www-form-urlencoded");
+                                    String body = "grant_type=refresh_token&refresh_token=" + tokenCfg +
+                                                  "&client_id=" + clientId + "&client_secret=" + clientSecret;
+                                    if (http.POST(body) == 200) {
+                                        JsonDocument fTok;
+                                        fTok["access_token"] = true;
+                                        JsonDocument dTok;
+                                        if (!deserializeJson(dTok, http.getStream(), DeserializationOption::Filter(fTok))) {
+                                            const char *newTok = dTok["access_token"];
+                                            if (newTok && newTok[0]) _spAccessToken = String(newTok);
+                                        }
+                                    }
+                                    http.end();
+                                }
+                            } else if (code == 200) {
+                                JsonDocument filter;
+                                filter["is_playing"] = true;
+                                filter["progress_ms"] = true;
+                                filter["item"]["name"] = true;
+                                filter["item"]["duration_ms"] = true;
+                                filter["item"]["artists"][0]["name"] = true;
+                                JsonDocument doc;
+                                if (!deserializeJson(doc, http.getStream(), DeserializationOption::Filter(filter))) {
+                                    bool playing = doc["is_playing"] | false;
+                                    const char *title = doc["item"]["name"] | "Now Playing";
+                                    const char *artist = doc["item"]["artists"][0]["name"] | "";
+                                    int progSec = (int)((doc["progress_ms"] | 0) / 1000);
+                                    int durSec  = (int)((doc["item"]["duration_ms"] | 180000) / 1000);
+                                    updateMusicState(playing, title, artist, progSec, durSec, -1);
+                                    String stateKey = String(playing ? "1|" : "0|") + title + "|" + artist;
+                                    if (playing != _cloudWasPlaying || stateKey != _cloudLastKey) {
+                                        _cloudWasPlaying = playing;
+                                        _cloudLastKey = stateKey;
+                                        NetworkEvent evt = {};
+                                        evt.kind = NetworkEvent::MUSIC_UPDATE;
+                                        evt.connected = playing;
+                                        xQueueSend(networkEventQueue, &evt, pdMS_TO_TICKS(10));
+                                    }
+                                }
+                                http.end();
+                            } else if (code == 204 && _cloudWasPlaying) {
+                                _cloudWasPlaying = false;
+                                updateMusicState(false, nullptr, nullptr, -1, -1, -1);
+                                NetworkEvent evt = {};
+                                evt.kind = NetworkEvent::MUSIC_UPDATE;
+                                evt.connected = false;
+                                xQueueSend(networkEventQueue, &evt, pdMS_TO_TICKS(10));
+                                http.end();
+                            } else {
+                                http.end();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // --- Wireless Cloud Auto-OTA request ---
         if (otaCloudRequested) {
             otaCloudRequested = false;
