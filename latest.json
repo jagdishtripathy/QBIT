@@ -1,0 +1,26 @@
+{
+  "version": "v2.2.4",
+  "timestamp": "2026-11-08T19:45:43Z",
+  "files": {
+    "firmware.bin": {
+      "url": "firmware.bin",
+      "size": 1675520,
+      "md5": "541cb729c92469ae5afec752137d480f"
+    },
+    "littlefs.bin": {
+      "url": "littlefs.bin",
+      "size": 720896,
+      "md5": "aff6ce00e96c3caabf9f2b9f578f5d76"
+    },
+    "bootloader.bin": {
+      "url": "bootloader.bin",
+      "size": 19440,
+      "md5": "b461869304208fd75b402bbde9c24019"
+    },
+    "partitions.bin": {
+      "url": "partitions.bin",
+      "size": 3072,
+      "md5": "bdd8b8d23e2abd1ecfd6caffb35a8f51"
+    }
+  }
+}
