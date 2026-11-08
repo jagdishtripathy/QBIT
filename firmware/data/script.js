@@ -2128,6 +2128,25 @@ pollCurrent();
     return 3 + Math.round(Math.abs(Math.sin(tick * 0.28 + bandIdx * 0.85)) * (maxH - 3));
   }
 
+  var remoteProgress = 0;
+  var remoteDuration = 180;
+  var remoteSyncMs = Date.now();
+
+  function drawMarqueeText(str, xLeft, xRight, y, bold) {
+    var s = (str || '').trim();
+    var charW = bold ? 7 : 6;
+    var availW = xRight - xLeft;
+    var strW = s.length * charW;
+    if (strW <= availW) {
+      drawText(s, xLeft, y, xLeft, xRight, bold);
+    } else {
+      var pad = s + '    ';
+      var cycleW = pad.length * charW;
+      var off = (tick * 2) % cycleW;
+      drawText(pad + pad, xLeft - off, y, xLeft, xRight, bold);
+    }
+  }
+
   function renderFrame() {
     var selStyle = parseInt(styleSelect.value, 10) || 0;
     if (selStyle === 0) {
@@ -2145,9 +2164,14 @@ pollCurrent();
     }
 
     vbuf.fill(0);
-    var title = (titleInput.value || '').trim() || 'Blinding Lights';
-    var artist = (artistInput.value || '').trim() || 'The Weeknd';
+    var title = (titleInput.value || '').trim() || 'Now Playing';
+    var artist = (artistInput.value || '').trim() || 'Live Audio';
     var angle = (tick * 12) % 360;
+
+    var curSec = remoteProgress + Math.floor((Date.now() - remoteSyncMs) / 1000);
+    var totSec = remoteDuration > 0 ? remoteDuration : 180;
+    if (curSec > totSec) curSec = curSec % totSec;
+    var frac = Math.max(0.04, Math.min(1, curSec / totSec));
 
     if (activeLayout === 1) {
       drawVinyl(21, 35, 19, angle);
@@ -2155,14 +2179,11 @@ pollCurrent();
       drawNote(31, 11 - (((tick + 6) >> 1) % 7));
 
       var rx = 50;
-      var songPad = title + '    ';
-      var sW = songPad.length * 7;
-      var sOff = (tick * 2) % sW;
-      drawText(songPad + songPad, rx - sOff, 5, rx, 126, true);
-      drawText(artist, rx, 17, rx, 126, false);
+      drawMarqueeText(title, rx, 126, 5, true);
+      drawMarqueeText(artist, rx, 126, 17, false);
 
       for (var x = rx; x <= 124; x++) setPx(x, 29, 0, W - 1);
-      var progW = 4 + ((tick % 120) * 70 / 120);
+      var progW = Math.max(3, Math.round(frac * 74));
       drawBox(rx, 28, progW, 3);
 
       for (var b = 0; b < 9; b++) {
@@ -2183,13 +2204,11 @@ pollCurrent();
         drawNote(6, 5);
         drawText('NOW PLAYING', 18, 5, 0, 127, false);
         for (var lx = 6; lx < 122; lx++) setPx(lx, 15, 0, W - 1);
-        var tPad = title + '    ';
-        var tW = tPad.length * 7;
-        var tOff = (tick * 2) % tW;
-        drawText(tPad + tPad, 8 - tOff, 23, 6, 122, true);
-        drawText(artist, 8, 37, 6, 122, false);
+        drawMarqueeText(title, 6, 122, 23, true);
+        drawMarqueeText(artist, 6, 122, 37, false);
         for (var px2 = 8; px2 <= 120; px2++) setPx(px2, 55, 0, W - 1);
-        drawBox(8, 54, 64, 3);
+        var progW3 = Math.max(4, Math.round(frac * 112));
+        drawBox(8, 54, progW3, 3);
       }
     }
 
@@ -2225,15 +2244,21 @@ pollCurrent();
 
   function parseTabLabel(label) {
     if (!label) return;
+    // Ignore Chrome internal capture stream identifiers (e.g. web-contents-media-stream://...)
+    if (/^(web-contents-media-stream:|window:|screen:|tab$|system audio|default|communications)/i.test(label.trim())) {
+      return;
+    }
     var cleaned = label
       .replace(/\s*[-|•]\s*(YouTube Music|YouTube|Spotify|SoundCloud|Apple Music).*$/i, '')
       .trim();
+    if (!cleaned) return;
     var parts = cleaned.split(/\s+[-•]\s+/);
     if (parts.length >= 2) {
       titleInput.value = parts[0].trim();
       artistInput.value = parts.slice(1).join(' - ').trim();
-    } else if (cleaned.length > 0) {
+    } else {
       titleInput.value = cleaned;
+      artistInput.value = '';
     }
   }
 
@@ -2345,17 +2370,30 @@ pollCurrent();
   }
 
   function pollMusicStatus() {
-    if (streaming) return;
     fetch('/api/music')
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (!d) return;
-        if (d.playing) {
+        if (typeof d.progress === 'number') {
+          remoteProgress = d.progress;
+          remoteSyncMs = Date.now();
+        }
+        if (typeof d.duration === 'number' && d.duration > 0) {
+          remoteDuration = d.duration;
+        }
+        if (d.title && document.activeElement !== titleInput) {
+          titleInput.value = d.title;
+        }
+        if (d.artist !== undefined && document.activeElement !== artistInput) {
+          artistInput.value = d.artist;
+        }
+        if (streaming) {
+          statusPill.textContent = 'LIVE FFT';
+          statusPill.className = 'pill pill-status pill-ok';
+        } else if (d.playing) {
           statusPill.textContent = 'ON DEVICE';
           statusPill.className = 'pill pill-status pill-ok';
-          if (document.activeElement !== titleInput && d.title) titleInput.value = d.title;
-          if (document.activeElement !== artistInput && d.artist) artistInput.value = d.artist;
-        } else if (!streaming) {
+        } else {
           statusPill.textContent = 'OFF';
           statusPill.className = 'pill pill-status';
         }
@@ -2363,7 +2401,7 @@ pollCurrent();
       .catch(function () {});
   }
   pollMusicStatus();
-  setInterval(pollMusicStatus, 4000);
+  setInterval(pollMusicStatus, 2000);
 
   setInterval(function () {
     if (!musicCard.classList.contains('collapsed') || streaming) {

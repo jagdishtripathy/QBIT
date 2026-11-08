@@ -8,7 +8,7 @@
 # ==========================================================================
 param(
     [string]$QbitHost = "http://qbit.local",
-    [int]$PollMs = 2000
+    [int]$PollMs = 1500
 )
 
 # Re-launch under Windows PowerShell 5.1 if invoked from PowerShell 7 (pwsh)
@@ -41,7 +41,7 @@ Write-Host " Press Ctrl+C to stop." -ForegroundColor Gray
 Write-Host "==========================================================" -ForegroundColor Cyan
 
 $lastStateKey = ""
-$lastPlayingSent = $false
+$lastSyncEpoch = 0
 
 while ($true) {
     try {
@@ -49,33 +49,42 @@ while ($true) {
         $isPlaying = $false
         $title = ""
         $artist = ""
+        $posSec = 0
+        $durSec = 180
 
         if ($session) {
             $pb = $session.GetPlaybackInfo()
             $status = $pb.PlaybackStatus.ToString()
             $isPlaying = ($status -eq "Playing")
-            if ($isPlaying) {
-                $info = Await-WinRT ($session.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
-                $title = if ($info.Title) { $info.Title.Trim() } else { "Now Playing" }
-                $artist = if ($info.Artist) { $info.Artist.Trim() } else { "Laptop Audio" }
+            $info = Await-WinRT ($session.TryGetMediaPropertiesAsync()) ([Windows.Media.Control.GlobalSystemMediaTransportControlsSessionMediaProperties])
+            if ($info) {
+                $title = if ($info.Title) { $info.Title.Trim() } else { "" }
+                $artist = if ($info.Artist) { $info.Artist.Trim() } else { "" }
+            }
+            $tl = $session.GetTimelineProperties()
+            if ($tl) {
+                $posSec = [Math]::Max(0, [int]$tl.Position.TotalSeconds)
+                $d = [int]$tl.EndTime.TotalSeconds
+                if ($d -gt 0) { $durSec = $d }
             }
         }
 
+        $nowEpoch = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
         $stateKey = "$isPlaying|$title|$artist"
-        if ($stateKey -ne $lastStateKey) {
+        $periodicRefresh = ($isPlaying -and (($nowEpoch - $lastSyncEpoch) -ge 5))
+
+        if (($stateKey -ne $lastStateKey) -or $periodicRefresh) {
             $lastStateKey = $stateKey
+            $lastSyncEpoch = $nowEpoch
+            $playVal = if ($isPlaying) { "1" } else { "0" }
+            $encTitle = [uri]::EscapeDataString($title)
+            $encArtist = [uri]::EscapeDataString($artist)
+            $url = "$QbitHost/api/music?playing=$playVal&title=$encTitle&artist=$encArtist&progress=$posSec&duration=$durSec"
+            Invoke-RestMethod -Uri $url -Method Post -TimeoutSec 3 | Out-Null
             if ($isPlaying) {
-                $encTitle = [uri]::EscapeDataString($title)
-                $encArtist = [uri]::EscapeDataString($artist)
-                $url = "$QbitHost/api/music?playing=1&title=$encTitle&artist=$encArtist&style=0"
-                Invoke-RestMethod -Uri $url -Method Post -TimeoutSec 3 | Out-Null
-                $lastPlayingSent = $true
-                Write-Host "[PLAYING] $title - $artist" -ForegroundColor Green
-            } elseif ($lastPlayingSent) {
-                $url = "$QbitHost/api/music?playing=0"
-                Invoke-RestMethod -Uri $url -Method Post -TimeoutSec 3 | Out-Null
-                $lastPlayingSent = $false
-                Write-Host "[PAUSED]  Restored QBIT companion mode" -ForegroundColor DarkYellow
+                Write-Host "[PLAYING] $title - $artist ($posSec/$durSec s)" -ForegroundColor Green
+            } else {
+                Write-Host "[PAUSED]  $title - $artist" -ForegroundColor DarkYellow
             }
         }
     } catch {
