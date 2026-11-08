@@ -464,8 +464,8 @@ static void renderPinnedTextBanner() {
 }
 
 // ==========================================================================
-static uint8_t       _musicActiveLayout = 1;     // 1 = Split Turntable, 3 = Auto-Flip View
-static unsigned long _musicLastSwitchMs = 0;
+//  Live Music View (Split Turntable: Vinyl + Song Title/Artist + EQ)
+// ==========================================================================
 static unsigned long _musicLastFrameMs  = 0;
 static uint32_t      _musicTick         = 0;
 
@@ -534,19 +534,6 @@ static void renderMusicView() {
     if (now - _musicLastFrameMs < 50) return;
     _musicLastFrameMs = now;
 
-    if (musicState.style == 0) {
-        if (now - _musicLastSwitchMs >= 16000) {
-            _musicLastSwitchMs = now;
-            if ((esp_random() % 3) == 0) {
-                _musicActiveLayout = (esp_random() & 1) ? 1 : 3;
-            } else {
-                _musicActiveLayout = (_musicActiveLayout == 1) ? 3 : 1;
-            }
-        }
-    } else {
-        _musicActiveLayout = (musicState.style == 3) ? 3 : 1;
-    }
-
     uint32_t elapsedAdd = (now - musicState.lastUpdateMs) / 1000;
     uint32_t curSec     = (uint32_t)musicState.progressSec + elapsedAdd;
     uint32_t totSec     = (musicState.durationSec > 0) ? musicState.durationSec : 180;
@@ -557,79 +544,31 @@ static void renderMusicView() {
 
     int angle = (int)((_musicTick * 12) % 360);
 
-    if (_musicActiveLayout == 1) {
-        // MODE 1: Split Turntable (Left 48x64 Vinyl + Right 78x64 Info & EQ)
-        drawSpinningVinyl(21, 35, 19, angle);
+    // Split Turntable: Left 48x64 Vinyl + Right 78x64 Info & EQ
+    drawSpinningVinyl(21, 35, 19, angle);
 
-        int ny1 = 8 - (int)((_musicTick >> 1) % 7);
-        int ny2 = 11 - (int)(((_musicTick + 6) >> 1) % 7);
-        drawMusicNoteIcon(5, ny1);
-        drawMusicNoteIcon(31, ny2);
+    int ny1 = 8 - (int)((_musicTick >> 1) % 7);
+    int ny2 = 11 - (int)(((_musicTick + 6) >> 1) % 7);
+    drawMusicNoteIcon(5, ny1);
+    drawMusicNoteIcon(31, ny2);
 
-        const int rx = 50;
-        u8g2.setFont(u8g2_font_6x10_tr);
-        drawClippedMarquee(musicState.title, rx, 126, 11, _musicTick);
+    const int rx = 50;
+    u8g2.setFont(u8g2_font_6x10_tr);
+    drawClippedMarquee(musicState.title, rx, 126, 11, _musicTick);
 
-        u8g2.setFont(u8g2_font_5x8_tr);
-        drawClippedMarquee(musicState.artist, rx, 126, 22, _musicTick);
+    u8g2.setFont(u8g2_font_5x8_tr);
+    drawClippedMarquee(musicState.artist, rx, 126, 22, _musicTick);
 
-        u8g2.drawHLine(rx, 29, 75);
-        int fillW = (int)((curSec * 75) / totSec);
-        if (fillW < 2) fillW = 2;
-        if (fillW > 75) fillW = 75;
-        u8g2.drawBox(rx, 28, fillW, 3);
+    u8g2.drawHLine(rx, 29, 75);
+    int fillW = (int)((curSec * 75) / totSec);
+    if (fillW < 2) fillW = 2;
+    if (fillW > 75) fillW = 75;
+    u8g2.drawBox(rx, 28, fillW, 3);
 
-        for (int b = 0; b < 9; b++) {
-            float wave = fabsf(sinf((float)_musicTick * 0.28f + (float)b * 0.85f));
-            int h = 3 + (int)(wave * 20.0f);
-            u8g2.drawBox(rx + b * 8, 61 - h, 6, h);
-        }
-    } else {
-        // MODE 3: Auto-Flip View (Full Turntable <-> Track Card)
-        uint32_t phase = (_musicTick / 80) % 2;
-        if (phase == 0) {
-            drawSpinningVinyl(64, 32, 24, angle);
-            for (int b = 0; b < 4; b++) {
-                float w1 = fabsf(sinf((float)_musicTick * 0.30f + (float)b * 0.9f));
-                float w2 = fabsf(cosf((float)_musicTick * 0.30f + (float)b * 0.9f));
-                int h1 = 4 + (int)(w1 * 38.0f);
-                int h2 = 4 + (int)(w2 * 38.0f);
-                u8g2.drawBox(4 + b * 7, 56 - h1, 5, h1);
-                u8g2.drawBox(98 + b * 7, 56 - h2, 5, h2);
-            }
-        } else {
-            drawMusicNoteIcon(6, 4);
-            u8g2.setFont(u8g2_font_5x8_tr);
-            u8g2.drawStr(16, 11, "NOW PLAYING");
-
-            char timeBuf[16];
-            snprintf(timeBuf, sizeof(timeBuf), "%02u:%02u", (unsigned)(curSec / 60), (unsigned)(curSec % 60));
-            u8g2.drawStr(98, 11, timeBuf);
-
-            u8g2.drawHLine(6, 15, 116);
-
-            u8g2.setFont(u8g2_font_7x14B_tr);
-            int titleW = (int)u8g2.getStrWidth(musicState.title);
-            if (titleW <= 116) {
-                u8g2.drawStr((128 - titleW) / 2, 33, musicState.title);
-            } else {
-                drawClippedMarquee(musicState.title, 6, 122, 33, _musicTick);
-            }
-
-            u8g2.setFont(u8g2_font_6x10_tr);
-            int artistW = (int)u8g2.getStrWidth(musicState.artist);
-            if (artistW <= 116) {
-                u8g2.drawStr((128 - artistW) / 2, 47, musicState.artist);
-            } else {
-                drawClippedMarquee(musicState.artist, 6, 122, 47, _musicTick);
-            }
-
-            u8g2.drawHLine(8, 57, 112);
-            int fillW = (int)((curSec * 112) / totSec);
-            if (fillW < 2) fillW = 2;
-            if (fillW > 112) fillW = 112;
-            u8g2.drawBox(8, 56, fillW, 3);
-        }
+    for (int b = 0; b < 9; b++) {
+        float wave = fabsf(sinf((float)_musicTick * 0.28f + (float)b * 0.85f));
+        int h = 3 + (int)(wave * 20.0f);
+        u8g2.drawBox(rx + b * 8, 61 - h, 6, h);
     }
 
     rotateBuffer180();
@@ -858,14 +797,8 @@ void displayTask(void *param) {
                     if (musicState.playing) {
                         if (_state == GIF_PLAYBACK || _state == PINNED_DISPLAY || _state == MUSIC_VIEW) {
                             if (_state != MUSIC_VIEW) {
-                                _musicActiveLayout = (musicState.style == 1 || musicState.style == 3)
-                                    ? musicState.style
-                                    : ((esp_random() & 1) ? 1 : 3);
-                                _musicLastSwitchMs = millis();
                                 _musicTick = 0;
                                 enterState(MUSIC_VIEW);
-                            } else if (musicState.style == 1 || musicState.style == 3) {
-                                _musicActiveLayout = musicState.style;
                             }
                         }
                     } else {
@@ -1423,14 +1356,11 @@ void displayTask(void *param) {
                     break;
 
                 case MUSIC_VIEW:
-                    if (gesture.type == SINGLE_TAP) {
+                    if (gesture.type == SINGLE_TAP || gesture.type == DOUBLE_TAP || gesture.type == LONG_PRESS) {
                         if (getBuzzerVolume() > 0) {
                             noTone(getPinBuzzer());
                             rtttl::begin(getPinBuzzer(), TOUCH_MELODY);
                         }
-                        _musicActiveLayout = (_musicActiveLayout == 1) ? 3 : 1;
-                        _musicLastSwitchMs = millis();
-                    } else if (gesture.type == DOUBLE_TAP || gesture.type == LONG_PRESS) {
                         musicState.playing = false;
                         enterState(getPinnedMode() != 0 ? PINNED_DISPLAY : GIF_PLAYBACK);
                         if (getPinnedMode() == 0 && gifPlayerHasFiles()) {

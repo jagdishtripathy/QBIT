@@ -1975,8 +1975,6 @@ pollCurrent();
   var musicCard        = document.getElementById('musicCard');
   var previewCanvas    = document.getElementById('musicPreviewCanvas');
   var statusPill       = document.getElementById('musicStatusPill');
-  var modeLabel        = document.getElementById('musicModeLabel');
-  var styleSelect      = document.getElementById('musicStyleSelect');
   var providerSelect   = document.getElementById('musicProviderSelect');
   var cloudUserRow     = document.getElementById('musicCloudUserRow');
   var cloudKeyRow      = document.getElementById('musicCloudKeyRow');
@@ -1999,10 +1997,15 @@ pollCurrent();
   var ctx = previewCanvas.getContext('2d');
   var vbuf = new Uint8Array(W * H);
   var imgData = ctx.createImageData(W * 2, H * 2);
-
-  var activeLayout = 1; // 1 = Mode 1 (Split), 3 = Mode 3 (Auto-Flip)
-  var lastSwitchMs = Date.now();
   var tick = 0;
+
+  function setMusicPill(isPlaying) {
+    if (!statusPill) return;
+    statusPill.textContent = isPlaying ? 'PLAYING' : 'OFF';
+    statusPill.classList.toggle('pill-on', isPlaying);
+    statusPill.classList.toggle('pill-off', !isPlaying);
+  }
+  setMusicPill(false);
 
   var FONT5x7 = {
     ' ': [0x00,0x00,0x00,0x00,0x00], '!': [0x00,0x00,0x5F,0x00,0x00],
@@ -2140,21 +2143,6 @@ pollCurrent();
   }
 
   function renderFrame() {
-    var selStyle = parseInt(styleSelect.value, 10) || 0;
-    if (selStyle === 0) {
-      if (Date.now() - lastSwitchMs >= 16000) {
-        lastSwitchMs = Date.now();
-        activeLayout = (activeLayout === 1) ? 3 : 1;
-      }
-    } else {
-      activeLayout = (selStyle === 3) ? 3 : 1;
-    }
-
-    if (modeLabel) {
-      modeLabel.textContent = (selStyle === 0 ? 'Random -> ' : '') +
-        (activeLayout === 1 ? 'Mode 1: Split Turntable' : 'Mode 3: Auto-Flip');
-    }
-
     vbuf.fill(0);
     var title = (titleInput.value || '').trim() || 'Now Playing';
     var artist = (artistInput.value || '').trim() || 'Live Audio';
@@ -2165,43 +2153,22 @@ pollCurrent();
     if (curSec > totSec) curSec = curSec % totSec;
     var frac = Math.max(0.04, Math.min(1, curSec / totSec));
 
-    if (activeLayout === 1) {
-      drawVinyl(21, 35, 19, angle);
-      drawNote(5, 8 - ((tick >> 1) % 7));
-      drawNote(31, 11 - (((tick + 6) >> 1) % 7));
+    // Mode 1: Split Turntable (Vinyl + Notes + Marquee Info + Progress + 9-Band EQ)
+    drawVinyl(21, 35, 19, angle);
+    drawNote(5, 8 - ((tick >> 1) % 7));
+    drawNote(31, 11 - (((tick + 6) >> 1) % 7));
 
-      var rx = 50;
-      drawMarqueeText(title, rx, 126, 5, true);
-      drawMarqueeText(artist, rx, 126, 17, false);
+    var rx = 50;
+    drawMarqueeText(title, rx, 126, 5, true);
+    drawMarqueeText(artist, rx, 126, 17, false);
 
-      for (var x = rx; x <= 124; x++) setPx(x, 29, 0, W - 1);
-      var progW = Math.max(3, Math.round(frac * 74));
-      drawBox(rx, 28, progW, 3);
+    for (var x = rx; x <= 124; x++) setPx(x, 29, 0, W - 1);
+    var progW = Math.max(3, Math.round(frac * 74));
+    drawBox(rx, 28, progW, 3);
 
-      for (var b = 0; b < 9; b++) {
-        var h = getBandLevel(b, 9, 22);
-        drawBox(rx + b * 8, 61 - h, 6, h);
-      }
-    } else {
-      var phase = Math.floor(tick / 80) % 2;
-      if (phase === 0) {
-        drawVinyl(64, 32, 24, angle);
-        for (var b2 = 0; b2 < 4; b2++) {
-          var h1 = getBandLevel(b2, 8, 40);
-          var h2 = getBandLevel(b2 + 4, 8, 40);
-          drawBox(4 + b2 * 7, 56 - h1, 5, h1);
-          drawBox(98 + b2 * 7, 56 - h2, 5, h2);
-        }
-      } else {
-        drawNote(6, 5);
-        drawText('NOW PLAYING', 18, 5, 0, 127, false);
-        for (var lx = 6; lx < 122; lx++) setPx(lx, 15, 0, W - 1);
-        drawMarqueeText(title, 6, 122, 23, true);
-        drawMarqueeText(artist, 6, 122, 37, false);
-        for (var px2 = 8; px2 <= 120; px2++) setPx(px2, 55, 0, W - 1);
-        var progW3 = Math.max(4, Math.round(frac * 112));
-        drawBox(8, 54, progW3, 3);
-      }
+    for (var b = 0; b < 9; b++) {
+      var h = getBandLevel(b, 9, 22);
+      drawBox(rx + b * 8, 61 - h, 6, h);
     }
 
     // Render 2x onto preview canvas
@@ -2314,13 +2281,12 @@ pollCurrent();
       params.set('playing', '1');
       params.set('title', (titleInput.value || '').trim() || 'Blinding Lights');
       params.set('artist', (artistInput.value || '').trim() || 'The Weeknd');
-      params.set('style', styleSelect.value || '0');
+      params.set('style', '1');
       fetch('/api/music?' + params.toString(), { method: 'POST' })
         .then(function (r) { return r.json(); })
         .then(function () {
-          statusPill.textContent = 'ON DEVICE';
-          statusPill.className = 'pill pill-status pill-ok';
-          showMusicMsg('Active on QBIT! (Tap QBIT to flip Mode 1 <-> Mode 3)', false);
+          setMusicPill(true);
+          showMusicMsg('Active on QBIT turntable!', false);
         })
         .catch(function () {
           showMusicMsg('Failed to send music state to QBIT', true);
@@ -2332,8 +2298,7 @@ pollCurrent();
     btnStop.addEventListener('click', function () {
       fetch('/api/music?playing=0', { method: 'POST' })
         .then(function () {
-          statusPill.textContent = 'OFF';
-          statusPill.className = 'pill pill-status';
+          setMusicPill(false);
           showMusicMsg('Music display stopped. Companion mode restored.', false);
         })
         .catch(function () {});
@@ -2358,13 +2323,7 @@ pollCurrent();
         if (d.artist !== undefined && document.activeElement !== artistInput) {
           artistInput.value = d.artist;
         }
-        if (d.playing) {
-          statusPill.textContent = 'ON DEVICE';
-          statusPill.className = 'pill pill-status pill-ok';
-        } else {
-          statusPill.textContent = 'OFF';
-          statusPill.className = 'pill pill-status';
-        }
+        setMusicPill(!!d.playing);
       })
       .catch(function () {});
 
