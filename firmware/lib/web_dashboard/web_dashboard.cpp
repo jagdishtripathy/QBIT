@@ -824,6 +824,57 @@ static void handlePostPinned(AsyncWebServerRequest *request) {
 }
 
 // ==========================================================================
+//  Handlers -- Live Music API (/api/music)
+// ==========================================================================
+
+static void handleGetMusic(AsyncWebServerRequest *request) {
+    StaticJsonDocument<256> doc;
+    doc["playing"]  = musicState.playing;
+    doc["title"]    = musicState.title;
+    doc["artist"]   = musicState.artist;
+    doc["progress"] = musicState.progressSec;
+    doc["duration"] = musicState.durationSec;
+    doc["style"]    = musicState.style;
+    String json;
+    serializeJson(doc, json);
+    request->send(200, "application/json", json);
+}
+
+static void handlePostMusic(AsyncWebServerRequest *request) {
+    bool     playing  = musicState.playing;
+    String   title    = musicState.title;
+    String   artist   = musicState.artist;
+    uint16_t progress = musicState.progressSec;
+    uint16_t duration = musicState.durationSec;
+    uint8_t  style    = musicState.style;
+
+    String val;
+    if (getParamValue(request, "playing", val)) {
+        playing = (val == "1" || val.equalsIgnoreCase("true") || val.equalsIgnoreCase("on"));
+    }
+    if (getParamValue(request, "title", val)) {
+        val.trim();
+        if (val.length() > 0) title = val;
+    }
+    if (getParamValue(request, "artist", val)) {
+        val.trim();
+        if (val.length() > 0) artist = val;
+    }
+    if (getParamValue(request, "progress", val)) {
+        progress = (uint16_t)val.toInt();
+    }
+    if (getParamValue(request, "duration", val)) {
+        duration = (uint16_t)val.toInt();
+    }
+    if (getParamValue(request, "style", val)) {
+        style = (uint8_t)val.toInt();
+    }
+
+    updateMusicState(playing, title.c_str(), artist.c_str(), progress, duration, style);
+    handleGetMusic(request);
+}
+
+// ==========================================================================
 //  Web Cam WebSocket (/ws_cam)
 // ==========================================================================
 
@@ -1108,6 +1159,8 @@ void webDashboardInit(AsyncWebServer &server) {
     server.on("/api/weather",       HTTP_POST, handlePostWeather);
     server.on("/api/pinned",        HTTP_GET,  handleGetPinned);
     server.on("/api/pinned",        HTTP_POST, handlePostPinned);
+    server.on("/api/music",         HTTP_GET,  handleGetMusic);
+    server.on("/api/music",         HTTP_POST, handlePostMusic);
     server.on("/api/ota/status",    HTTP_GET,  handleGetOtaStatus);
     server.on("/api/ota/cloud",     HTTP_POST, handlePostOtaCloud);
     server.on("/api/ota/cancel",    HTTP_POST, handlePostOtaCancel);

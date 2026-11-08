@@ -28,3 +28,37 @@ char          otaStatusMsg[32]   = "Idle";
 volatile bool otaCloudRequested  = false;
 volatile bool otaCancelRequested = false;
 volatile bool otaRebootRequested = false;
+
+MusicState musicState = {
+    false,
+    "Not Playing",
+    "QBIT Music",
+    0,
+    180,
+    0,
+    0
+};
+
+void updateMusicState(bool playing, const char *title, const char *artist,
+                      uint16_t progressSec, uint16_t durationSec, uint8_t style) {
+    musicState.playing = playing;
+    if (title && title[0] != '\0') {
+        strncpy(musicState.title, title, sizeof(musicState.title) - 1);
+        musicState.title[sizeof(musicState.title) - 1] = '\0';
+    }
+    if (artist && artist[0] != '\0') {
+        strncpy(musicState.artist, artist, sizeof(musicState.artist) - 1);
+        musicState.artist[sizeof(musicState.artist) - 1] = '\0';
+    }
+    musicState.progressSec  = progressSec;
+    musicState.durationSec  = (durationSec > 0) ? durationSec : 180;
+    musicState.style        = style;
+    musicState.lastUpdateMs = millis();
+
+    if (networkEventQueue) {
+        NetworkEvent evt = {};
+        evt.kind = NetworkEvent::MUSIC_UPDATE;
+        evt.connected = playing;
+        xQueueSend(networkEventQueue, &evt, pdMS_TO_TICKS(50));
+    }
+}

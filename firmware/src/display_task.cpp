@@ -26,6 +26,7 @@
 #include <NonBlockingRtttl.h>
 #include <WiFi.h>
 #include <stdio.h>
+#include <math.h>
 
 // ==========================================================================
 //  Configuration
@@ -463,6 +464,180 @@ static void renderPinnedTextBanner() {
 }
 
 // ==========================================================================
+static uint8_t       _musicActiveLayout = 1;     // 1 = Split Turntable, 3 = Auto-Flip View
+static unsigned long _musicLastSwitchMs = 0;
+static unsigned long _musicLastFrameMs  = 0;
+static uint32_t      _musicTick         = 0;
+
+static void drawMusicNoteIcon(int x, int y) {
+    u8g2.drawBox(x + 1, y + 4, 2, 2);
+    u8g2.drawVLine(x + 3, y + 1, 4);
+    u8g2.drawPixel(x + 4, y + 1);
+    u8g2.drawPixel(x + 5, y + 2);
+}
+
+static void drawVinylArc(int cx, int cy, int r, int a0Deg, int a1Deg) {
+    for (int a = a0Deg; a <= a1Deg; a += 5) {
+        float rad = (float)a * 0.0174532925f;
+        int px = cx + (int)roundf(cosf(rad) * (float)r);
+        int py = cy + (int)roundf(sinf(rad) * (float)r);
+        if (px >= 0 && px < 128 && py >= 0 && py < 64) {
+            u8g2.drawPixel(px, py);
+        }
+    }
+}
+
+static void drawSpinningVinyl(int cx, int cy, int r, int angleDeg) {
+    u8g2.drawCircle(cx, cy, r, U8G2_DRAW_ALL);
+    if (r > 10) u8g2.drawCircle(cx, cy, r - 1, U8G2_DRAW_ALL);
+    u8g2.drawCircle(cx, cy, 6, U8G2_DRAW_ALL);
+    u8g2.drawPixel(cx, cy);
+
+    int rOuterGroove = (r * 68) / 100;
+    int rInnerGroove = (r * 48) / 100;
+    drawVinylArc(cx, cy, rOuterGroove, angleDeg, angleDeg + 55);
+    drawVinylArc(cx, cy, rOuterGroove, angleDeg + 180, angleDeg + 235);
+    drawVinylArc(cx, cy, rInnerGroove, angleDeg + 25, angleDeg + 70);
+    drawVinylArc(cx, cy, rInnerGroove, angleDeg + 205, angleDeg + 250);
+
+    float mRad = (float)angleDeg * 0.0174532925f;
+    int mx = cx + (int)roundf(cosf(mRad) * 4.0f);
+    int my = cy + (int)roundf(sinf(mRad) * 4.0f);
+    u8g2.drawPixel(mx, my);
+
+    int px = cx + r + 3;
+    int py = cy - r + 2;
+    if (px < 126 && py >= 1) {
+        u8g2.drawBox(px - 1, py - 1, 3, 3);
+        u8g2.drawLine(px, py, px - 2, cy + 4);
+        u8g2.drawLine(px - 2, cy + 4, cx + r - 4, cy + 9);
+    }
+}
+
+static void drawClippedMarquee(const char *text, int xLeft, int xRight, int yBaseline, uint32_t tick) {
+    int availW = xRight - xLeft;
+    int strW   = (int)u8g2.getStrWidth(text);
+    u8g2.setClipWindow(xLeft, 0, xRight, 63);
+    if (strW <= availW) {
+        u8g2.drawStr(xLeft, yBaseline, text);
+    } else {
+        int cycleW = strW + 24;
+        int offset = (int)((tick * 2) % (uint32_t)cycleW);
+        u8g2.drawStr(xLeft - offset, yBaseline, text);
+        u8g2.drawStr(xLeft - offset + cycleW, yBaseline, text);
+    }
+    u8g2.setMaxClipWindow();
+}
+
+static void renderMusicView() {
+    unsigned long now = millis();
+    if (now - _musicLastFrameMs < 50) return;
+    _musicLastFrameMs = now;
+
+    if (musicState.style == 0) {
+        if (now - _musicLastSwitchMs >= 16000) {
+            _musicLastSwitchMs = now;
+            if ((esp_random() % 3) == 0) {
+                _musicActiveLayout = (esp_random() & 1) ? 1 : 3;
+            } else {
+                _musicActiveLayout = (_musicActiveLayout == 1) ? 3 : 1;
+            }
+        }
+    } else {
+        _musicActiveLayout = (musicState.style == 3) ? 3 : 1;
+    }
+
+    uint32_t elapsedAdd = (now - musicState.lastUpdateMs) / 1000;
+    uint32_t curSec     = (uint32_t)musicState.progressSec + elapsedAdd;
+    uint32_t totSec     = (musicState.durationSec > 0) ? musicState.durationSec : 180;
+    if (curSec > totSec) curSec = curSec % totSec;
+
+    u8g2.clearBuffer();
+    u8g2.setDrawColor(1);
+
+    int angle = (int)((_musicTick * 12) % 360);
+
+    if (_musicActiveLayout == 1) {
+        // MODE 1: Split Turntable (Left 48x64 Vinyl + Right 78x64 Info & EQ)
+        drawSpinningVinyl(21, 35, 19, angle);
+
+        int ny1 = 8 - (int)((_musicTick >> 1) % 7);
+        int ny2 = 11 - (int)(((_musicTick + 6) >> 1) % 7);
+        drawMusicNoteIcon(5, ny1);
+        drawMusicNoteIcon(31, ny2);
+
+        const int rx = 50;
+        u8g2.setFont(u8g2_font_6x10_tr);
+        drawClippedMarquee(musicState.title, rx, 126, 11, _musicTick);
+
+        u8g2.setFont(u8g2_font_5x8_tr);
+        drawClippedMarquee(musicState.artist, rx, 126, 22, _musicTick);
+
+        u8g2.drawHLine(rx, 29, 75);
+        int fillW = (int)((curSec * 75) / totSec);
+        if (fillW < 2) fillW = 2;
+        if (fillW > 75) fillW = 75;
+        u8g2.drawBox(rx, 28, fillW, 3);
+
+        for (int b = 0; b < 9; b++) {
+            float wave = fabsf(sinf((float)_musicTick * 0.28f + (float)b * 0.85f));
+            int h = 3 + (int)(wave * 20.0f);
+            u8g2.drawBox(rx + b * 8, 61 - h, 6, h);
+        }
+    } else {
+        // MODE 3: Auto-Flip View (Full Turntable <-> Track Card)
+        uint32_t phase = (_musicTick / 80) % 2;
+        if (phase == 0) {
+            drawSpinningVinyl(64, 32, 24, angle);
+            for (int b = 0; b < 4; b++) {
+                float w1 = fabsf(sinf((float)_musicTick * 0.30f + (float)b * 0.9f));
+                float w2 = fabsf(cosf((float)_musicTick * 0.30f + (float)b * 0.9f));
+                int h1 = 4 + (int)(w1 * 38.0f);
+                int h2 = 4 + (int)(w2 * 38.0f);
+                u8g2.drawBox(4 + b * 7, 56 - h1, 5, h1);
+                u8g2.drawBox(98 + b * 7, 56 - h2, 5, h2);
+            }
+        } else {
+            drawMusicNoteIcon(6, 4);
+            u8g2.setFont(u8g2_font_5x8_tr);
+            u8g2.drawStr(16, 11, "NOW PLAYING");
+
+            char timeBuf[16];
+            snprintf(timeBuf, sizeof(timeBuf), "%02u:%02u", (unsigned)(curSec / 60), (unsigned)(curSec % 60));
+            u8g2.drawStr(98, 11, timeBuf);
+
+            u8g2.drawHLine(6, 15, 116);
+
+            u8g2.setFont(u8g2_font_7x14B_tr);
+            int titleW = (int)u8g2.getStrWidth(musicState.title);
+            if (titleW <= 116) {
+                u8g2.drawStr((128 - titleW) / 2, 33, musicState.title);
+            } else {
+                drawClippedMarquee(musicState.title, 6, 122, 33, _musicTick);
+            }
+
+            u8g2.setFont(u8g2_font_6x10_tr);
+            int artistW = (int)u8g2.getStrWidth(musicState.artist);
+            if (artistW <= 116) {
+                u8g2.drawStr((128 - artistW) / 2, 47, musicState.artist);
+            } else {
+                drawClippedMarquee(musicState.artist, 6, 122, 47, _musicTick);
+            }
+
+            u8g2.drawHLine(8, 57, 112);
+            int fillW = (int)((curSec * 112) / totSec);
+            if (fillW < 2) fillW = 2;
+            if (fillW > 112) fillW = 112;
+            u8g2.drawBox(8, 56, fillW, 3);
+        }
+    }
+
+    rotateBuffer180();
+    u8g2.sendBuffer();
+    _musicTick++;
+}
+
+// ==========================================================================
 //  Display task main loop
 // ==========================================================================
 
@@ -667,7 +842,7 @@ void displayTask(void *param) {
 
                 case NetworkEvent::CAM_START:
                     // Only interrupt idle GIF playback; leave games/timer/menus alone
-                    if (_state == GIF_PLAYBACK) {
+                    if (_state == GIF_PLAYBACK || _state == MUSIC_VIEW || _state == PINNED_DISPLAY) {
                         enterState(CAM_VIEW);
                         showText("[ Web Cam ]", "", "Waiting for feed...", "Tap to exit");
                     }
@@ -676,6 +851,30 @@ void displayTask(void *param) {
                 case NetworkEvent::CAM_STOP:
                     if (_state == CAM_VIEW) {
                         enterState(getPinnedMode() != 0 ? PINNED_DISPLAY : GIF_PLAYBACK);
+                    }
+                    break;
+
+                case NetworkEvent::MUSIC_UPDATE:
+                    if (musicState.playing) {
+                        if (_state == GIF_PLAYBACK || _state == PINNED_DISPLAY || _state == MUSIC_VIEW) {
+                            if (_state != MUSIC_VIEW) {
+                                _musicActiveLayout = (musicState.style == 1 || musicState.style == 3)
+                                    ? musicState.style
+                                    : ((esp_random() & 1) ? 1 : 3);
+                                _musicLastSwitchMs = millis();
+                                _musicTick = 0;
+                                enterState(MUSIC_VIEW);
+                            } else if (musicState.style == 1 || musicState.style == 3) {
+                                _musicActiveLayout = musicState.style;
+                            }
+                        }
+                    } else {
+                        if (_state == MUSIC_VIEW) {
+                            enterState(getPinnedMode() != 0 ? PINNED_DISPLAY : GIF_PLAYBACK);
+                            if (getPinnedMode() == 0 && gifPlayerHasFiles()) {
+                                gifPlayerSetFile(gifPlayerNextShuffle());
+                            }
+                        }
                     }
                     break;
 
@@ -1222,6 +1421,23 @@ void displayTask(void *param) {
                         enterState(GIF_PLAYBACK);
                     }
                     break;
+
+                case MUSIC_VIEW:
+                    if (gesture.type == SINGLE_TAP) {
+                        if (getBuzzerVolume() > 0) {
+                            noTone(getPinBuzzer());
+                            rtttl::begin(getPinBuzzer(), TOUCH_MELODY);
+                        }
+                        _musicActiveLayout = (_musicActiveLayout == 1) ? 3 : 1;
+                        _musicLastSwitchMs = millis();
+                    } else if (gesture.type == DOUBLE_TAP || gesture.type == LONG_PRESS) {
+                        musicState.playing = false;
+                        enterState(getPinnedMode() != 0 ? PINNED_DISPLAY : GIF_PLAYBACK);
+                        if (getPinnedMode() == 0 && gifPlayerHasFiles()) {
+                            gifPlayerSetFile(gifPlayerNextShuffle());
+                        }
+                    }
+                    break;
             }
         }
 
@@ -1585,6 +1801,14 @@ void displayTask(void *param) {
                 if (webCamHasNewFrame()) {
                     webCamConsumeFrame(_camRenderBuf);
                     gifRenderFrame(&u8g2, _camRenderBuf, QGIF_FRAME_WIDTH, QGIF_FRAME_HEIGHT);
+                }
+                break;
+
+            case MUSIC_VIEW:
+                if (!musicState.playing) {
+                    enterState(getPinnedMode() != 0 ? PINNED_DISPLAY : GIF_PLAYBACK);
+                } else {
+                    renderMusicView();
                 }
                 break;
 

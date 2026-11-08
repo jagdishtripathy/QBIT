@@ -161,6 +161,39 @@
     <div class="msg" id="camMsg"></div>
   </div>
 
+  <div class="card collapsible collapsed" id="musicCard">
+    <div class="card-title card-title-row">
+      <span class="card-title-text">Live Music</span>
+      <span class="pill pill-status" id="musicStatusPill">OFF</span>
+    </div>
+    <div class="cam-preview-wrap" style="margin-bottom:10px">
+      <canvas id="musicPreviewCanvas" width="256" height="128" class="cam-preview"></canvas>
+      <div class="cam-mode-watermark" id="musicModeLabel">Randomize (Mode 1 &amp; 3)</div>
+    </div>
+    <div class="setting">
+      <label class="setting-label">Layout</label>
+      <select id="musicStyleSelect" class="input-select">
+        <option value="0" selected>Randomize (Mode 1 &amp; Mode 3)</option>
+        <option value="1">Mode 1: Split Turntable</option>
+        <option value="3">Mode 3: Auto-Flip View</option>
+      </select>
+    </div>
+    <div class="setting">
+      <label class="setting-label">Song</label>
+      <input type="text" id="musicTitleInput" class="input-text" maxlength="64" placeholder="Song title (auto-detected from tab)">
+    </div>
+    <div class="setting">
+      <label class="setting-label">Artist</label>
+      <input type="text" id="musicArtistInput" class="input-text" maxlength="64" placeholder="Artist name">
+    </div>
+    <div class="device-actions" style="margin-top:8px">
+      <button class="btn btn-save" id="btnMusicTabSync" type="button">Sync Browser Tab Audio</button>
+      <button class="btn btn-secondary" id="btnMusicNativeSend" type="button">Send to QBIT</button>
+      <button class="btn btn-del" id="btnMusicStop" type="button">Stop</button>
+    </div>
+    <div class="msg" id="musicMsg"></div>
+  </div>
+
   <div class="card collapsible collapsed">
     <div class="card-title">MQTT</div>
     <div class="setting">
@@ -201,7 +234,7 @@
       <input type="text" id="mqttPrefix" class="input-text" value="qbit" placeholder="qbit" maxlength="64">
     </div>
     <div class="mqtt-hint">
-      Topics: <code>&lt;prefix&gt;/&lt;id&gt;/status</code>, <code>.../info</code>, <code>.../command</code>
+      Topics: <code>&lt;prefix&gt;/&lt;id&gt;/status</code>, <code>.../info</code>, <code>.../command</code>, <code>.../music</code>
     </div>
     <button class="btn btn-save" id="btnMqttSave">Save MQTT</button>
   </div>

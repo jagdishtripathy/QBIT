@@ -1968,3 +1968,376 @@ pollCurrent();
   }, 10000);
 })();
 
+// ==========================================================================
+//  Live Music Visualizer & Sync (Mode 1 Split Turntable & Mode 3 Auto-Flip)
+// ==========================================================================
+(function () {
+  var musicCard        = document.getElementById('musicCard');
+  var previewCanvas    = document.getElementById('musicPreviewCanvas');
+  var statusPill       = document.getElementById('musicStatusPill');
+  var modeLabel        = document.getElementById('musicModeLabel');
+  var styleSelect      = document.getElementById('musicStyleSelect');
+  var titleInput       = document.getElementById('musicTitleInput');
+  var artistInput      = document.getElementById('musicArtistInput');
+  var btnTabSync       = document.getElementById('btnMusicTabSync');
+  var btnNativeSend    = document.getElementById('btnMusicNativeSend');
+  var btnStop          = document.getElementById('btnMusicStop');
+  var msgEl            = document.getElementById('musicMsg');
+
+  if (!musicCard || !previewCanvas) return;
+
+  var W = 128, H = 64;
+  var ctx = previewCanvas.getContext('2d');
+  var vbuf = new Uint8Array(W * H);
+  var packedBuf = new Uint8Array(1024);
+  var imgData = ctx.createImageData(W * 2, H * 2);
+
+  var activeLayout = 1; // 1 = Mode 1 (Split), 3 = Mode 3 (Auto-Flip)
+  var lastSwitchMs = Date.now();
+  var tick = 0;
+
+  var audioCtx = null;
+  var analyser = null;
+  var freqData = null;
+  var mediaStream = null;
+  var ws = null;
+  var streaming = false;
+
+  var FONT5x7 = {
+    ' ': [0x00,0x00,0x00,0x00,0x00], '!': [0x00,0x00,0x5F,0x00,0x00],
+    '-': [0x08,0x08,0x08,0x08,0x08], '.': [0x00,0x60,0x60,0x00,0x00],
+    ':': [0x00,0x36,0x36,0x00,0x00], '/': [0x20,0x10,0x08,0x04,0x02],
+    '0': [0x3E,0x51,0x49,0x45,0x3E], '1': [0x00,0x42,0x7F,0x40,0x00],
+    '2': [0x42,0x61,0x51,0x49,0x46], '3': [0x21,0x41,0x45,0x4B,0x31],
+    '4': [0x18,0x14,0x12,0x7F,0x10], '5': [0x27,0x45,0x45,0x45,0x39],
+    '6': [0x3C,0x4A,0x49,0x49,0x30], '7': [0x01,0x71,0x09,0x05,0x03],
+    '8': [0x36,0x49,0x49,0x49,0x36], '9': [0x06,0x49,0x49,0x29,0x1E],
+    'A': [0x7E,0x11,0x11,0x11,0x7E], 'B': [0x7F,0x49,0x49,0x49,0x36],
+    'C': [0x3E,0x41,0x41,0x41,0x22], 'D': [0x7F,0x41,0x41,0x22,0x1C],
+    'E': [0x7F,0x49,0x49,0x49,0x41], 'F': [0x7F,0x09,0x09,0x09,0x01],
+    'G': [0x3E,0x41,0x49,0x49,0x7A], 'H': [0x7F,0x08,0x08,0x08,0x7F],
+    'I': [0x00,0x41,0x7F,0x41,0x00], 'J': [0x20,0x40,0x41,0x3F,0x01],
+    'K': [0x7F,0x08,0x14,0x22,0x41], 'L': [0x7F,0x40,0x40,0x40,0x40],
+    'M': [0x7F,0x02,0x0C,0x02,0x7F], 'N': [0x7F,0x04,0x08,0x10,0x7F],
+    'O': [0x3E,0x41,0x41,0x41,0x3E], 'P': [0x7F,0x09,0x09,0x09,0x06],
+    'Q': [0x3E,0x41,0x51,0x21,0x5E], 'R': [0x7F,0x09,0x19,0x29,0x46],
+    'S': [0x46,0x49,0x49,0x49,0x31], 'T': [0x01,0x01,0x7F,0x01,0x01],
+    'U': [0x3F,0x40,0x40,0x40,0x3F], 'V': [0x1F,0x20,0x40,0x20,0x1F],
+    'W': [0x3F,0x40,0x38,0x40,0x3F], 'X': [0x63,0x14,0x08,0x14,0x63],
+    'Y': [0x07,0x08,0x70,0x08,0x07], 'Z': [0x61,0x51,0x49,0x45,0x43]
+  };
+
+  function showMusicMsg(txt, isErr) {
+    if (!msgEl) return;
+    msgEl.textContent = txt;
+    msgEl.className = 'msg ' + (isErr ? 'err' : 'ok');
+  }
+
+  function setPx(x, y, clipX0, clipX1) {
+    x = Math.round(x); y = Math.round(y);
+    if (x < (clipX0 || 0) || x > (clipX1 !== undefined ? clipX1 : W - 1) || y < 0 || y >= H) return;
+    vbuf[y * W + x] = 1;
+  }
+
+  function drawBox(x, y, w, h) {
+    for (var py = y; py < y + h; py++) {
+      for (var px = x; px < x + w; px++) setPx(px, py, 0, W - 1);
+    }
+  }
+
+  function drawLine(x0, y0, x1, y1) {
+    x0 = Math.round(x0); y0 = Math.round(y0);
+    x1 = Math.round(x1); y1 = Math.round(y1);
+    var dx = Math.abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+    var dy = -Math.abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    var err = dx + dy;
+    while (true) {
+      setPx(x0, y0, 0, W - 1);
+      if (x0 === x1 && y0 === y1) break;
+      var e2 = 2 * err;
+      if (e2 >= dy) { err += dy; x0 += sx; }
+      if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+  }
+
+  function drawCircle(cx, cy, r) {
+    for (var a = 0; a < 360; a += 3) {
+      var rad = a * Math.PI / 180;
+      setPx(cx + Math.cos(rad) * r, cy + Math.sin(rad) * r, 0, W - 1);
+    }
+  }
+
+  function drawArc(cx, cy, r, a0, a1) {
+    for (var a = a0; a <= a1; a += 5) {
+      var rad = a * Math.PI / 180;
+      setPx(cx + Math.cos(rad) * r, cy + Math.sin(rad) * r, 0, W - 1);
+    }
+  }
+
+  function drawNote(x, y) {
+    setPx(x+1, y+4); setPx(x+2, y+4); setPx(x+1, y+5); setPx(x+2, y+5);
+    setPx(x+3, y+4); setPx(x+3, y+3); setPx(x+3, y+2); setPx(x+3, y+1);
+    setPx(x+4, y+1); setPx(x+5, y+2);
+  }
+
+  function drawText(str, x, y, clipX0, clipX1, bold) {
+    var s = (str || '').toUpperCase();
+    var curX = x;
+    for (var i = 0; i < s.length; i++) {
+      var ch = FONT5x7[s[i]] || FONT5x7[' '];
+      for (var col = 0; col < 5; col++) {
+        var bits = ch[col];
+        for (var row = 0; row < 7; row++) {
+          if ((bits >> row) & 1) {
+            setPx(curX + col, y + row, clipX0, clipX1);
+            if (bold) setPx(curX + col + 1, y + row, clipX0, clipX1);
+          }
+        }
+      }
+      curX += bold ? 7 : 6;
+    }
+  }
+
+  function drawVinyl(cx, cy, r, angleDeg) {
+    drawCircle(cx, cy, r);
+    drawCircle(cx, cy, r - 1);
+    drawCircle(cx, cy, 6);
+    setPx(cx, cy, 0, W - 1);
+    drawArc(cx, cy, Math.round(r * 0.68), angleDeg, angleDeg + 55);
+    drawArc(cx, cy, Math.round(r * 0.68), angleDeg + 180, angleDeg + 235);
+    drawArc(cx, cy, Math.round(r * 0.48), angleDeg + 25, angleDeg + 70);
+    drawArc(cx, cy, Math.round(r * 0.48), angleDeg + 205, angleDeg + 250);
+    var mRad = angleDeg * Math.PI / 180;
+    setPx(cx + Math.cos(mRad) * 4, cy + Math.sin(mRad) * 4, 0, W - 1);
+    var px = cx + r + 3, py = cy - r + 2;
+    drawBox(px - 1, py - 1, 3, 3);
+    drawLine(px, py, px - 2, cy + 4);
+    drawLine(px - 2, cy + 4, cx + r - 4, cy + 9);
+  }
+
+  function getBandLevel(bandIdx, totalBands, maxH) {
+    if (analyser && freqData) {
+      analyser.getByteFrequencyData(freqData);
+      var binStart = Math.floor((bandIdx / totalBands) * (freqData.length * 0.65));
+      var binEnd = Math.max(binStart + 1, Math.floor(((bandIdx + 1) / totalBands) * (freqData.length * 0.65)));
+      var sum = 0;
+      for (var i = binStart; i < binEnd; i++) sum += freqData[i];
+      var avg = sum / (binEnd - binStart);
+      return Math.max(3, Math.min(maxH, Math.round((avg / 255) * maxH)));
+    }
+    return 3 + Math.round(Math.abs(Math.sin(tick * 0.28 + bandIdx * 0.85)) * (maxH - 3));
+  }
+
+  function renderFrame() {
+    var selStyle = parseInt(styleSelect.value, 10) || 0;
+    if (selStyle === 0) {
+      if (Date.now() - lastSwitchMs >= 16000) {
+        lastSwitchMs = Date.now();
+        activeLayout = (activeLayout === 1) ? 3 : 1;
+      }
+    } else {
+      activeLayout = (selStyle === 3) ? 3 : 1;
+    }
+
+    if (modeLabel) {
+      modeLabel.textContent = (selStyle === 0 ? 'Random -> ' : '') +
+        (activeLayout === 1 ? 'Mode 1: Split Turntable' : 'Mode 3: Auto-Flip');
+    }
+
+    vbuf.fill(0);
+    var title = (titleInput.value || '').trim() || 'Blinding Lights';
+    var artist = (artistInput.value || '').trim() || 'The Weeknd';
+    var angle = (tick * 12) % 360;
+
+    if (activeLayout === 1) {
+      drawVinyl(21, 35, 19, angle);
+      drawNote(5, 8 - ((tick >> 1) % 7));
+      drawNote(31, 11 - (((tick + 6) >> 1) % 7));
+
+      var rx = 50;
+      var songPad = title + '    ';
+      var sW = songPad.length * 7;
+      var sOff = (tick * 2) % sW;
+      drawText(songPad + songPad, rx - sOff, 5, rx, 126, true);
+      drawText(artist, rx, 17, rx, 126, false);
+
+      for (var x = rx; x <= 124; x++) setPx(x, 29, 0, W - 1);
+      var progW = 4 + ((tick % 120) * 70 / 120);
+      drawBox(rx, 28, progW, 3);
+
+      for (var b = 0; b < 9; b++) {
+        var h = getBandLevel(b, 9, 22);
+        drawBox(rx + b * 8, 61 - h, 6, h);
+      }
+    } else {
+      var phase = Math.floor(tick / 80) % 2;
+      if (phase === 0) {
+        drawVinyl(64, 32, 24, angle);
+        for (var b2 = 0; b2 < 4; b2++) {
+          var h1 = getBandLevel(b2, 8, 40);
+          var h2 = getBandLevel(b2 + 4, 8, 40);
+          drawBox(4 + b2 * 7, 56 - h1, 5, h1);
+          drawBox(98 + b2 * 7, 56 - h2, 5, h2);
+        }
+      } else {
+        drawNote(6, 5);
+        drawText('NOW PLAYING', 18, 5, 0, 127, false);
+        for (var lx = 6; lx < 122; lx++) setPx(lx, 15, 0, W - 1);
+        var tPad = title + '    ';
+        var tW = tPad.length * 7;
+        var tOff = (tick * 2) % tW;
+        drawText(tPad + tPad, 8 - tOff, 23, 6, 122, true);
+        drawText(artist, 8, 37, 6, 122, false);
+        for (var px2 = 8; px2 <= 120; px2++) setPx(px2, 55, 0, W - 1);
+        drawBox(8, 54, 64, 3);
+      }
+    }
+
+    // Render 2x onto preview canvas
+    var data = imgData.data;
+    for (var py = 0; py < H * 2; py++) {
+      var sy = py >> 1;
+      for (var px = 0; px < W * 2; px++) {
+        var sx = px >> 1;
+        var lit = vbuf[sy * W + sx];
+        var idx = (py * W * 2 + px) * 4;
+        var v = lit ? 255 : 0;
+        data[idx] = v; data[idx + 1] = v; data[idx + 2] = v; data[idx + 3] = 255;
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+
+    // If streaming live over /ws_cam, pack 1024-byte QGIF frame (0=lit, 1=dark)
+    if (streaming && ws && ws.readyState === WebSocket.OPEN && ws.bufferedAmount === 0) {
+      for (var byteIdx = 0; byteIdx < 1024; byteIdx++) {
+        var bVal = 0xFF;
+        var basePx = byteIdx * 8;
+        for (var bit = 0; bit < 8; bit++) {
+          if (vbuf[basePx + bit]) bVal &= ~(0x80 >> bit);
+        }
+        packedBuf[byteIdx] = bVal;
+      }
+      ws.send(packedBuf.buffer);
+    }
+
+    tick++;
+  }
+
+  function parseTabLabel(label) {
+    if (!label) return;
+    var cleaned = label
+      .replace(/\s*[-|•]\s*(YouTube Music|YouTube|Spotify|SoundCloud|Apple Music).*$/i, '')
+      .trim();
+    var parts = cleaned.split(/\s+[-•]\s+/);
+    if (parts.length >= 2) {
+      titleInput.value = parts[0].trim();
+      artistInput.value = parts.slice(1).join(' - ').trim();
+    } else if (cleaned.length > 0) {
+      titleInput.value = cleaned;
+    }
+  }
+
+  function stopStreamOnly() {
+    streaming = false;
+    if (ws) { try { ws.close(); } catch (e) {} ws = null; }
+    if (mediaStream) {
+      mediaStream.getTracks().forEach(function (t) { t.stop(); });
+      mediaStream = null;
+    }
+    if (audioCtx) { try { audioCtx.close(); } catch (e) {} audioCtx = null; }
+    analyser = null;
+    freqData = null;
+    if (btnTabSync) btnTabSync.textContent = 'Sync Browser Tab Audio';
+  }
+
+  if (btnTabSync) {
+    btnTabSync.addEventListener('click', function () {
+      if (streaming) {
+        stopStreamOnly();
+        statusPill.textContent = 'OFF';
+        statusPill.className = 'pill pill-status';
+        showMusicMsg('Browser audio stream stopped.', false);
+        return;
+      }
+
+      var mediaPromise = (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)
+        ? navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
+        : navigator.mediaDevices.getUserMedia({ audio: true });
+
+      mediaPromise.then(function (stream) {
+        mediaStream = stream;
+        var vTracks = stream.getVideoTracks();
+        if (vTracks.length > 0 && vTracks[0].label) {
+          parseTabLabel(vTracks[0].label);
+        }
+        var aTracks = stream.getAudioTracks();
+        if (aTracks.length > 0) {
+          if (!vTracks.length && aTracks[0].label) parseTabLabel(aTracks[0].label);
+          audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+          var src = audioCtx.createMediaStreamSource(new MediaStream([aTracks[0]]));
+          analyser = audioCtx.createAnalyser();
+          analyser.fftSize = 64;
+          freqData = new Uint8Array(analyser.frequencyBinCount);
+          src.connect(analyser);
+        }
+
+        var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        ws = new WebSocket(proto + '//' + location.host + '/ws_cam');
+        ws.binaryType = 'arraybuffer';
+        ws.onopen = function () {
+          streaming = true;
+          statusPill.textContent = 'LIVE FFT';
+          statusPill.className = 'pill pill-status pill-ok';
+          btnTabSync.textContent = 'Stop Tab Sync';
+          showMusicMsg('Streaming live vinyl + audio spectrum to QBIT!', false);
+        };
+        ws.onclose = function () {
+          if (streaming) stopStreamOnly();
+        };
+      }).catch(function (err) {
+        showMusicMsg('Audio capture cancelled or unavailable (' + err.message + ')', true);
+      });
+    });
+  }
+
+  if (btnNativeSend) {
+    btnNativeSend.addEventListener('click', function () {
+      stopStreamOnly();
+      var params = new URLSearchParams();
+      params.set('playing', '1');
+      params.set('title', (titleInput.value || '').trim() || 'Blinding Lights');
+      params.set('artist', (artistInput.value || '').trim() || 'The Weeknd');
+      params.set('style', styleSelect.value || '0');
+      fetch('/api/music?' + params.toString(), { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function () {
+          statusPill.textContent = 'ON DEVICE';
+          statusPill.className = 'pill pill-status pill-ok';
+          showMusicMsg('Active on QBIT! (Tap QBIT to flip Mode 1 <-> Mode 3)', false);
+        })
+        .catch(function () {
+          showMusicMsg('Failed to send music state to QBIT', true);
+        });
+    });
+  }
+
+  if (btnStop) {
+    btnStop.addEventListener('click', function () {
+      stopStreamOnly();
+      fetch('/api/music?playing=0', { method: 'POST' })
+        .then(function () {
+          statusPill.textContent = 'OFF';
+          statusPill.className = 'pill pill-status';
+          showMusicMsg('Music display stopped. Companion mode restored.', false);
+        })
+        .catch(function () {});
+    });
+  }
+
+  setInterval(function () {
+    if (!musicCard.classList.contains('collapsed') || streaming) {
+      renderFrame();
+    }
+  }, 60);
+})();
+

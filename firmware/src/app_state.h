@@ -40,7 +40,8 @@ enum DisplayState {
     CAR_RUNNING,
     CAR_OVER,
     CAM_VIEW,
-    PINNED_DISPLAY
+    PINNED_DISPLAY,
+    MUSIC_VIEW
 };
 
 // ==========================================================================
@@ -74,7 +75,8 @@ struct GestureEvent {
         MQTT_COMMAND,
         CAM_START,
         CAM_STOP,
-        PINNED_UPDATE
+        PINNED_UPDATE,
+        MUSIC_UPDATE
     } kind;
 
     // Event-specific data
@@ -167,5 +169,21 @@ extern char             otaStatusMsg[32];
 extern volatile bool    otaCloudRequested;
 extern volatile bool    otaCancelRequested;
 extern volatile bool    otaRebootRequested;
+
+// ==========================================================================
+//  Live Music state (updated via MQTT or REST API /api/music)
+// ==========================================================================
+struct MusicState {
+    bool          playing;
+    char          title[65];
+    char          artist[65];
+    uint16_t      progressSec;
+    uint16_t      durationSec;
+    uint8_t       style;         // 0 = Randomize (Mode 1 & 3), 1 = Mode 1 (Split), 3 = Mode 3 (Auto-Flip)
+    unsigned long lastUpdateMs;
+};
+extern MusicState musicState;
+void updateMusicState(bool playing, const char *title, const char *artist,
+                      uint16_t progressSec, uint16_t durationSec, uint8_t style);
 
 #endif // APP_STATE_H

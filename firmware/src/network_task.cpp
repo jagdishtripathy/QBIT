@@ -742,6 +742,21 @@ static void mqttCallback(char *topic, byte *payload, unsigned int length) {
             xQueueSend(networkEventQueue, &evt, pdMS_TO_TICKS(100));
             mqttPublishPokeEvent(evt.sender, evt.text);
             Serial.printf("[MQTT] Poke from %s: %s\n", evt.sender, evt.text);
+        } else if (strcmp(cmd, "music") == 0) {
+            bool playing = doc["playing"] | true;
+            const char *stateStr = doc["state"] | "";
+            if (strcasecmp(stateStr, "paused") == 0 || strcasecmp(stateStr, "stopped") == 0 || strcasecmp(stateStr, "off") == 0) {
+                playing = false;
+            }
+            const char *title    = doc["title"]  | (doc["song"] | "Unknown Track");
+            const char *artist   = doc["artist"] | "Unknown Artist";
+            uint16_t progressSec = (uint16_t)(doc["progress"] | 0);
+            uint16_t durationSec = (uint16_t)(doc["duration"] | 180);
+            uint8_t  style       = (uint8_t)(doc["style"] | 0);
+            updateMusicState(playing, title, artist, progressSec, durationSec, style);
+            Serial.printf("[MQTT] Music cmd: playing=%d title=%s artist=%s\n", playing, title, artist);
+        } else if (strcmp(cmd, "music_stop") == 0) {
+            updateMusicState(false, "", "", 0, 180, 0);
         }
         return;
     }
@@ -770,6 +785,43 @@ static void mqttCallback(char *topic, byte *payload, unsigned int length) {
         strncpy(evt.sender, "mute", sizeof(evt.sender) - 1);
         strncpy(evt.text, rawPayload.c_str(), sizeof(evt.text) - 1);
         xQueueSend(networkEventQueue, &evt, pdMS_TO_TICKS(100));
+        return;
+    }
+
+    // Dedicated music topic: accepts JSON or plain text ("Title - Artist", or "stop")
+    if (topicStr == prefix + "/" + id + "/music") {
+        String trimmed = rawPayload;
+        trimmed.trim();
+        if (trimmed.length() == 0 || trimmed.equalsIgnoreCase("stop") ||
+            trimmed.equalsIgnoreCase("off") || trimmed.equalsIgnoreCase("pause")) {
+            updateMusicState(false, "", "", 0, 180, 0);
+            return;
+        }
+        if (trimmed[0] == '{') {
+            StaticJsonDocument<512> doc;
+            if (!deserializeJson(doc, payload, length)) {
+                bool playing = doc["playing"] | true;
+                const char *stateStr = doc["state"] | "";
+                if (strcasecmp(stateStr, "paused") == 0 || strcasecmp(stateStr, "stopped") == 0 || strcasecmp(stateStr, "off") == 0) {
+                    playing = false;
+                }
+                const char *title    = doc["title"]  | (doc["song"] | "Unknown Track");
+                const char *artist   = doc["artist"] | "Unknown Artist";
+                uint16_t progressSec = (uint16_t)(doc["progress"] | 0);
+                uint16_t durationSec = (uint16_t)(doc["duration"] | 180);
+                uint8_t  style       = (uint8_t)(doc["style"] | 0);
+                updateMusicState(playing, title, artist, progressSec, durationSec, style);
+            }
+            return;
+        }
+        int sep = trimmed.indexOf(" - ");
+        if (sep > 0) {
+            String t = trimmed.substring(0, sep);
+            String a = trimmed.substring(sep + 3);
+            updateMusicState(true, t.c_str(), a.c_str(), 0, 180, 0);
+        } else {
+            updateMusicState(true, trimmed.c_str(), "Now Playing", 0, 180, 0);
+        }
         return;
     }
 
@@ -853,6 +905,7 @@ static void mqttReconnect() {
         _mqttClient.subscribe((prefix + "/" + id + "/poke_text/set").c_str());
         _mqttClient.subscribe((prefix + "/" + id + "/mute/set").c_str());
         _mqttClient.subscribe((prefix + "/" + id + "/animation/next").c_str());
+        _mqttClient.subscribe((prefix + "/" + id + "/music").c_str());
 
         // Publish HA discovery
         mqttPublishHADiscovery(&_mqttClient);
