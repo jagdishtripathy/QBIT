@@ -292,7 +292,7 @@ function setMqttPill(el, enabled, connected) {
   if (btnCloudOta) {
     btnCloudOta.addEventListener('click', function () {
       closeFwPopover();
-      if (!confirm('Download and flash the latest firmware from GitHub Cloud over Wi-Fi?\n\nYour animations and settings will be preserved.')) return;
+      if (!confirm('Download and flash the latest Firmware + LittleFS Web UI from GitHub Cloud over Wi-Fi?')) return;
       setOtaProgress(0, 'Requesting Wireless Cloud OTA...', false);
       fetch('/api/ota/cloud', { method: 'POST' })
         .then(function (r) { return r.json(); })
@@ -2260,7 +2260,17 @@ pollCurrent();
         return;
       }
 
-      var mediaPromise = (navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia)
+      if (!window.isSecureContext || !navigator.mediaDevices) {
+        var host = 'http://' + window.location.host;
+        showMusicMsg(
+          'Browser blocks tab audio on HTTP. Enable chrome://flags/#unsafely-treat-insecure-origin-as-secure for ' +
+          host + ' or use Send to QBIT / tools/qbit_music_sync.ps1.',
+          true
+        );
+        return;
+      }
+
+      var mediaPromise = navigator.mediaDevices.getDisplayMedia
         ? navigator.mediaDevices.getDisplayMedia({ video: true, audio: true })
         : navigator.mediaDevices.getUserMedia({ audio: true });
 
@@ -2333,6 +2343,27 @@ pollCurrent();
         .catch(function () {});
     });
   }
+
+  function pollMusicStatus() {
+    if (streaming) return;
+    fetch('/api/music')
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        if (!d) return;
+        if (d.playing) {
+          statusPill.textContent = 'ON DEVICE';
+          statusPill.className = 'pill pill-status pill-ok';
+          if (document.activeElement !== titleInput && d.title) titleInput.value = d.title;
+          if (document.activeElement !== artistInput && d.artist) artistInput.value = d.artist;
+        } else if (!streaming) {
+          statusPill.textContent = 'OFF';
+          statusPill.className = 'pill pill-status';
+        }
+      })
+      .catch(function () {});
+  }
+  pollMusicStatus();
+  setInterval(pollMusicStatus, 4000);
 
   setInterval(function () {
     if (!musicCard.classList.contains('collapsed') || streaming) {

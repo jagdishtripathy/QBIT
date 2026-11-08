@@ -516,8 +516,18 @@ static void handleOtaUploadData(AsyncWebServerRequest *request,
         }
         otaInProgress      = true;
         otaProgressPercent = 0;
-        strncpy(otaStatusMsg, "Uploading firmware...", sizeof(otaStatusMsg) - 1);
-        if (!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) {
+        String lowerName = filename;
+        lowerName.toLowerCase();
+        bool isFs = (lowerName.indexOf("littlefs") >= 0 || lowerName.indexOf("spiffs") >= 0);
+        if (isFs) {
+            strncpy(otaStatusMsg, "Uploading LittleFS...", sizeof(otaStatusMsg) - 1);
+            gifPlayerStop();
+            vTaskDelay(pdMS_TO_TICKS(30));
+            LittleFS.end();
+        } else {
+            strncpy(otaStatusMsg, "Uploading firmware...", sizeof(otaStatusMsg) - 1);
+        }
+        if (!Update.begin(UPDATE_SIZE_UNKNOWN, isFs ? U_SPIFFS : U_FLASH)) {
             _otaUploadOk    = false;
             _otaUploadError = "Update.begin failed";
             strncpy(otaStatusMsg, "OTA init failed", sizeof(otaStatusMsg) - 1);

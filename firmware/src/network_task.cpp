@@ -7,11 +7,14 @@
 #include "time_manager.h"
 #include "mqtt_ha.h"
 #include "poke_handler.h"
+#include "gif_player.h"
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <Update.h>
+#include <LittleFS.h>
+#include <Preferences.h>
 #include <NetWizard.h>
 #include <ESPmDNS.h>
 #include <ArduinoJson.h>
@@ -450,8 +453,13 @@ static void wsMessage(WebsocketsClient &client, WebsocketsMessage message) {
 #ifndef CLOUD_OTA_FIRMWARE_URL
 #define CLOUD_OTA_FIRMWARE_URL "https://jagdishtripathy.github.io/QBIT/firmware.bin"
 #endif
+#ifndef CLOUD_OTA_LITTLEFS_URL
+#define CLOUD_OTA_LITTLEFS_URL "https://jagdishtripathy.github.io/QBIT/littlefs.bin"
+#endif
 #define VERSION_CHECK_TIMEOUT_MS 45000  // HTTPClient uses ms (compare with millis())
 #define VERSION_RECHECK_INTERVAL_MS (6UL * 60UL * 60UL * 1000UL)  // periodic check while WiFi up
+
+static char _lastCheckedRemoteVer[UPDATE_AVAILABLE_VERSION_LEN] = "";
 
 // Parse "major.minor.patch" (ignoring optional leading 'v'/'V').
 static bool parseSemVer(const char *ver, int &maj, int &min, int &pat) {
@@ -462,11 +470,11 @@ static bool parseSemVer(const char *ver, int &maj, int &min, int &pat) {
     return sscanf(ver, "%d.%d.%d", &maj, &min, &pat) >= 1;
 }
 
-// Returns true only when remoteVer is strictly newer than localVer.
-// Local "dev-build" builds do not trigger false update notifications.
+// Returns true when remoteVer is strictly newer than localVer,
+// or when localVer is "dev-build" so local test builds can always OTA to a release.
 static bool isRemoteVersionNewer(const char *localVer, const char *remoteVer) {
     if (!localVer || !remoteVer || remoteVer[0] == '\0') return false;
-    if (strcmp(localVer, "dev-build") == 0) return false;
+    if (strcmp(localVer, "dev-build") == 0) return true;
 
     int lMaj = 0, lMin = 0, lPat = 0;
     int rMaj = 0, rMin = 0, rPat = 0;
@@ -511,6 +519,9 @@ static void checkFirmwareVersion() {
         Serial.println("[Version] No version in JSON");
         return;
     }
+    strncpy(_lastCheckedRemoteVer, remoteVer, UPDATE_AVAILABLE_VERSION_LEN - 1);
+    _lastCheckedRemoteVer[UPDATE_AVAILABLE_VERSION_LEN - 1] = '\0';
+
     if (isRemoteVersionNewer(kQbitVersion, remoteVer)) {
         updateAvailable = true;
         strncpy(updateAvailableVersion, remoteVer, UPDATE_AVAILABLE_VERSION_LEN - 1);
@@ -524,8 +535,122 @@ static void checkFirmwareVersion() {
 }
 
 // ==========================================================================
-//  Wireless Cloud Auto-OTA (HTTPS stream from GitHub Pages into inactive slot)
+//  Wireless Cloud Auto-OTA (HTTPS stream Firmware + LittleFS from GitHub Pages)
 // ==========================================================================
+static bool streamCloudOtaPartition(const char *url, int command, int pctStart, int pctSpan, const char *dlMsg) {
+    WiFiClientSecure client;
+    client.setInsecure();
+    client.setTimeout(30000);
+
+    HTTPClient http;
+    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
+    http.setTimeout(30000);
+    http.setReuse(false);
+    if (!http.begin(client, url)) {
+        strncpy(otaStatusMsg, "Connect failed", sizeof(otaStatusMsg) - 1);
+        return false;
+    }
+
+    int code = http.GET();
+    if (code != HTTP_CODE_OK) {
+        snprintf(otaStatusMsg, sizeof(otaStatusMsg), "HTTP error %d", code);
+        http.end();
+        return false;
+    }
+
+    int totalLen = http.getSize();
+    size_t updateSize = (totalLen > 0) ? (size_t)totalLen : UPDATE_SIZE_UNKNOWN;
+
+    if (command == U_SPIFFS) {
+        strncpy(otaStatusMsg, "Preparing LittleFS...", sizeof(otaStatusMsg) - 1);
+        gifPlayerStop();
+        vTaskDelay(pdMS_TO_TICKS(30));
+        LittleFS.end();
+    } else {
+        strncpy(otaStatusMsg, "Preparing flash...", sizeof(otaStatusMsg) - 1);
+    }
+
+    if (!Update.begin(updateSize, command)) {
+        snprintf(otaStatusMsg, sizeof(otaStatusMsg), "Begin fail: %d", Update.getError());
+        http.end();
+        return false;
+    }
+
+    WiFiClient *stream = http.getStreamPtr();
+    const size_t OTA_BUF_SIZE = 4096;
+    uint8_t *buf = (uint8_t *)malloc(OTA_BUF_SIZE);
+    if (!buf) {
+        strncpy(otaStatusMsg, "Out of memory", sizeof(otaStatusMsg) - 1);
+        Update.abort();
+        http.end();
+        return false;
+    }
+
+    size_t written = 0;
+    unsigned long lastDataMs = millis();
+    bool writeErr = false;
+    bool cancelled = false;
+
+    strncpy(otaStatusMsg, dlMsg, sizeof(otaStatusMsg) - 1);
+    while ((http.connected() || stream->available() > 0) && (totalLen <= 0 || (int)written < totalLen)) {
+        if (otaCancelRequested) {
+            cancelled = true;
+            break;
+        }
+        size_t avail = stream->available();
+        if (avail > 0) {
+            size_t toRead = (avail > OTA_BUF_SIZE) ? OTA_BUF_SIZE : avail;
+            int r = stream->readBytes(buf, toRead);
+            if (r > 0) {
+                if (Update.write(buf, (size_t)r) != (size_t)r) {
+                    Serial.printf("[OTA] Flash write failed at %u bytes, err=%d\n", (unsigned)written, Update.getError());
+                    writeErr = true;
+                    break;
+                }
+                written += (size_t)r;
+                lastDataMs = millis();
+                if (totalLen > 0) {
+                    int pct = pctStart + (int)((written * (unsigned long long)pctSpan) / (size_t)totalLen);
+                    if (pct > 99) pct = 99;
+                    otaProgressPercent = pct;
+                }
+            }
+        } else {
+            if (millis() - lastDataMs > 30000) {
+                Serial.printf("[OTA] Stream timeout (>30s) at %u bytes\n", (unsigned)written);
+                writeErr = true;
+                break;
+            }
+            vTaskDelay(pdMS_TO_TICKS(10));
+        }
+    }
+    free(buf);
+    http.end();
+
+    if (cancelled) {
+        Update.abort();
+        otaCancelRequested = false;
+        strncpy(otaStatusMsg, "Update cancelled", sizeof(otaStatusMsg) - 1);
+        Serial.println("[OTA] Cloud OTA cancelled by user");
+        return false;
+    }
+
+    if (totalLen > 0 && written < (size_t)totalLen) {
+        Serial.printf("[OTA] Incomplete: wrote %u of %d bytes\n", (unsigned)written, totalLen);
+        writeErr = true;
+    }
+
+    if (!writeErr && Update.end(true) && Update.isFinished()) {
+        return true;
+    }
+
+    Update.abort();
+    snprintf(otaStatusMsg, sizeof(otaStatusMsg), "Fail: err=%d", Update.getError());
+    Serial.printf("[OTA] Partition OTA failed (cmd=%d, err=%u, written=%u/%d)\n",
+                  command, (unsigned)Update.getError(), (unsigned)written, totalLen);
+    return false;
+}
+
 static void performCloudOta() {
     otaCancelRequested = false;
     if (WiFi.status() != WL_CONNECTED) {
@@ -547,16 +672,22 @@ static void performCloudOta() {
         return;
     }
 
-    if (!updateAvailable) {
+    Preferences otaPrefs;
+    otaPrefs.begin("qbit_ota", false);
+    String syncedFsVer = otaPrefs.getString("fs_ver", "");
+    bool needFsSync = (_lastCheckedRemoteVer[0] != '\0' && syncedFsVer != String(_lastCheckedRemoteVer));
+
+    if (!updateAvailable && !needFsSync) {
+        otaPrefs.end();
         snprintf(otaStatusMsg, sizeof(otaStatusMsg), "Up to date! (%s)", kQbitVersion);
-        Serial.printf("[OTA] Already on latest version (%s), skipping flash\n", kQbitVersion);
+        Serial.printf("[OTA] Already on latest firmware & LittleFS (%s), skipping flash\n", kQbitVersion);
         vTaskDelay(pdMS_TO_TICKS(2500));
         otaInProgress = false;
         return;
     }
 
     strncpy(otaStatusMsg, "Connecting to cloud...", sizeof(otaStatusMsg) - 1);
-    Serial.println("[OTA] Starting Cloud OTA from " CLOUD_OTA_FIRMWARE_URL);
+    Serial.println("[OTA] Starting Cloud OTA (Firmware + LittleFS)");
 
     // Disconnect WebSocket & MQTT during OTA to free heap and TLS memory
     if (_wsClient.available()) _wsClient.close();
@@ -566,128 +697,32 @@ static void performCloudOta() {
     // so network streaming and flash writes are not starved by I2C redraws.
     vTaskPrioritySet(NULL, 2);
 
-    WiFiClientSecure client;
-    client.setInsecure();
-    // In Arduino framework, setTimeout() takes milliseconds.
-    // 30000ms = 30 seconds (prevents premature timeouts during SPI flash 64KB block erases)
-    client.setTimeout(30000);
-
-    HTTPClient http;
-    http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
-    http.setTimeout(30000);
-    http.setReuse(false);
-    if (!http.begin(client, CLOUD_OTA_FIRMWARE_URL)) {
-        strncpy(otaStatusMsg, "Connect failed", sizeof(otaStatusMsg) - 1);
-        vTaskPrioritySet(NULL, 1);
-        vTaskDelay(pdMS_TO_TICKS(3000));
-        otaInProgress = false;
-        return;
+    bool ok = true;
+    if (updateAvailable) {
+        ok = streamCloudOtaPartition(CLOUD_OTA_FIRMWARE_URL, U_FLASH, 0, 70, "Downloading FW...");
     }
 
-    int code = http.GET();
-    if (code != HTTP_CODE_OK) {
-        snprintf(otaStatusMsg, sizeof(otaStatusMsg), "HTTP error %d", code);
-        http.end();
-        vTaskPrioritySet(NULL, 1);
-        vTaskDelay(pdMS_TO_TICKS(3000));
-        otaInProgress = false;
-        return;
+    if (ok && !otaCancelRequested) {
+        int fsStart = updateAvailable ? 70 : 0;
+        int fsSpan  = updateAvailable ? 30 : 100;
+        ok = streamCloudOtaPartition(CLOUD_OTA_LITTLEFS_URL, U_SPIFFS, fsStart, fsSpan, "Updating LittleFS...");
     }
-
-    int totalLen = http.getSize();
-    size_t updateSize = (totalLen > 0) ? (size_t)totalLen : UPDATE_SIZE_UNKNOWN;
-    strncpy(otaStatusMsg, "Preparing flash...", sizeof(otaStatusMsg) - 1);
-    if (!Update.begin(updateSize, U_FLASH)) {
-        snprintf(otaStatusMsg, sizeof(otaStatusMsg), "Begin fail: %d", Update.getError());
-        http.end();
-        vTaskPrioritySet(NULL, 1);
-        vTaskDelay(pdMS_TO_TICKS(3000));
-        otaInProgress = false;
-        return;
-    }
-
-    WiFiClient *stream = http.getStreamPtr();
-    const size_t OTA_BUF_SIZE = 4096;
-    uint8_t *buf = (uint8_t *)malloc(OTA_BUF_SIZE);
-    if (!buf) {
-        strncpy(otaStatusMsg, "Out of memory", sizeof(otaStatusMsg) - 1);
-        Update.abort();
-        http.end();
-        vTaskPrioritySet(NULL, 1);
-        vTaskDelay(pdMS_TO_TICKS(3000));
-        otaInProgress = false;
-        return;
-    }
-
-    size_t written = 0;
-    unsigned long lastDataMs = millis();
-    bool writeErr = false;
-    bool cancelled = false;
-
-    strncpy(otaStatusMsg, "Downloading...", sizeof(otaStatusMsg) - 1);
-    while ((http.connected() || stream->available() > 0) && (totalLen <= 0 || (int)written < totalLen)) {
-        if (otaCancelRequested) {
-            cancelled = true;
-            break;
-        }
-        size_t avail = stream->available();
-        if (avail > 0) {
-            size_t toRead = (avail > OTA_BUF_SIZE) ? OTA_BUF_SIZE : avail;
-            int r = stream->readBytes(buf, toRead);
-            if (r > 0) {
-                if (Update.write(buf, (size_t)r) != (size_t)r) {
-                    Serial.printf("[OTA] Flash write failed at %u bytes, err=%d\n", (unsigned)written, Update.getError());
-                    writeErr = true;
-                    break;
-                }
-                written += (size_t)r;
-                lastDataMs = millis();
-                if (totalLen > 0) {
-                    int pct = (int)((written * 100ULL) / (size_t)totalLen);
-                    if (pct > 99) pct = 99;
-                    otaProgressPercent = pct;
-                }
-            }
-        } else {
-            if (millis() - lastDataMs > 30000) {
-                Serial.printf("[OTA] Stream timeout (>30s) at %u bytes\n", (unsigned)written);
-                writeErr = true;
-                break;
-            }
-            vTaskDelay(pdMS_TO_TICKS(10));
-        }
-    }
-    free(buf);
-    http.end();
 
     vTaskPrioritySet(NULL, 1);
 
-    if (cancelled) {
-        Update.abort();
-        otaCancelRequested = false;
-        strncpy(otaStatusMsg, "Update cancelled", sizeof(otaStatusMsg) - 1);
-        Serial.println("[OTA] Cloud OTA cancelled by user");
-        vTaskDelay(pdMS_TO_TICKS(2000));
-        otaInProgress = false;
-        return;
-    }
-
-    if (totalLen > 0 && written < (size_t)totalLen) {
-        Serial.printf("[OTA] Incomplete: wrote %u of %d bytes\n", (unsigned)written, totalLen);
-        writeErr = true;
-    }
-
-    if (!writeErr && Update.end(true) && Update.isFinished()) {
+    if (ok) {
+        if (_lastCheckedRemoteVer[0] != '\0') {
+            otaPrefs.putString("fs_ver", _lastCheckedRemoteVer);
+        }
+        otaPrefs.end();
         otaProgressPercent = 100;
         strncpy(otaStatusMsg, "Success! Rebooting", sizeof(otaStatusMsg) - 1);
-        Serial.println("[OTA] Cloud OTA complete, rebooting...");
+        Serial.println("[OTA] Cloud OTA (FW + LittleFS) complete, rebooting...");
         vTaskDelay(pdMS_TO_TICKS(1500));
         esp_restart();
     } else {
-        Update.abort();
-        snprintf(otaStatusMsg, sizeof(otaStatusMsg), "Fail: err=%d", Update.getError());
-        Serial.printf("[OTA] Cloud OTA failed (err=%u, written=%u/%d)\n", (unsigned)Update.getError(), (unsigned)written, totalLen);
-        vTaskDelay(pdMS_TO_TICKS(3500));
+        otaPrefs.end();
+        vTaskDelay(pdMS_TO_TICKS(3000));
         otaInProgress = false;
     }
 }
