@@ -2189,13 +2189,27 @@ pollCurrent();
 
   function updateProviderFields() {
     if (!providerSelect) return;
-    var p = parseInt(providerSelect.value, 10) || 0;
+    var p = parseInt(providerSelect.value, 10);
+    if (isNaN(p)) p = 3;
     var helpEl = document.getElementById('musicCloudHelp');
     if (p === 0) {
       if (cloudUserRow) cloudUserRow.style.display = 'none';
       if (cloudKeyRow) cloudKeyRow.style.display = 'none';
       if (cloudTokenRow) cloudTokenRow.style.display = 'none';
       if (helpEl) helpEl.style.display = 'none';
+    } else if (p === 3) {
+      if (cloudUserRow) cloudUserRow.style.display = '';
+      if (cloudKeyRow) cloudKeyRow.style.display = '';
+      if (cloudTokenRow) cloudTokenRow.style.display = 'none';
+      if (cloudUserLabel) cloudUserLabel.textContent = 'Last.fm User';
+      if (cloudKeyLabel) cloudKeyLabel.textContent = 'Last.fm API Key';
+      if (cloudUserInput) cloudUserInput.placeholder = 'Your Last.fm username';
+      if (helpEl) {
+        helpEl.style.display = 'block';
+        helpEl.innerHTML = 'Auto-detects active playback from Browser Extension, Phone, and MQTT.<br>' +
+                           '1. Link Spotify: <a href="https://www.last.fm/settings/applications" target="_blank" style="color:#30d158;text-decoration:underline">last.fm/settings/applications</a><br>' +
+                           '2. Get free API Key: <a href="https://www.last.fm/api/account/create" target="_blank" style="color:#30d158;text-decoration:underline">last.fm/api/account/create</a>';
+      }
     } else if (p === 1) {
       if (cloudUserRow) cloudUserRow.style.display = '';
       if (cloudKeyRow) cloudKeyRow.style.display = '';

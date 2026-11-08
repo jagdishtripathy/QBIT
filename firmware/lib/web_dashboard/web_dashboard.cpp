@@ -934,12 +934,14 @@ static void handlePostMusicConfig(AsyncWebServerRequest *request) {
     }
 
     setMusicCloudConfig(provider, user, apiKey, token);
-    if (provider == 1) {
+    if (provider == 3) {
+        setCloudMusicStatus("All Sources active (Extension, Phone & Cloud)");
+    } else if (provider == 1) {
         setCloudMusicStatus("Checking Last.fm...");
     } else if (provider == 2) {
         setCloudMusicStatus("Checking Spotify...");
     } else {
-        setCloudMusicStatus("Browser Extension / MQTT");
+        setCloudMusicStatus("Browser Extension / MQTT active");
     }
     handleGetMusicConfig(request);
 }

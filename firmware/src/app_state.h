@@ -179,11 +179,12 @@ struct MusicState {
     char          artist[65];
     uint16_t      progressSec;
     uint16_t      durationSec;
-    uint8_t       style;         // 0 = Randomize (Mode 1 & 3), 1 = Mode 1 (Split), 3 = Mode 3 (Auto-Flip)
+    uint8_t       style;         // 1 = Mode 1 Split Turntable
     unsigned long lastUpdateMs;
+    uint8_t       source;        // 0 = None, 1 = Local (Extension/MQTT/REST), 2 = Cloud (Last.fm/Spotify)
 };
 extern MusicState musicState;
 void updateMusicState(bool playing, const char *title, const char *artist,
-                      uint16_t progressSec, uint16_t durationSec, uint8_t style);
+                      uint16_t progressSec, uint16_t durationSec, uint8_t style, uint8_t source = 1);
 
 #endif // APP_STATE_H

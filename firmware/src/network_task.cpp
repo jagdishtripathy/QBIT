@@ -1233,8 +1233,15 @@ void networkTask(void *param) {
                 static bool _cloudWasPlaying = false;
                 static String _cloudLastKey = "";
 
-                if (prov == 1) {
-                    // Provider 1: Last.fm (works across Phone, Laptop, Spotify, YouTube Music)
+                // If in "All Sources" mode (prov == 3) and a local source (Browser Extension / MQTT)
+                // is currently playing and was updated in the last 10 seconds, do not let cloud poll overwrite it.
+                bool localIsPlaying = (prov == 3 && musicState.playing && musicState.source == 1 &&
+                                       (millis() - musicState.lastUpdateMs < 10000));
+
+                if (localIsPlaying) {
+                    setCloudMusicStatus("All: Playing from Browser Extension");
+                } else if (prov == 1 || (prov == 3 && getMusicUser().length() > 0 && getMusicApiKey().length() > 0)) {
+                    // Provider 1 or Provider 3 (All Sources): Last.fm (works across Phone, Laptop, Spotify, YouTube Music)
                     String user = getMusicUser();
                     String key  = getMusicApiKey();
                     if (user.length() == 0) {
@@ -1283,20 +1290,24 @@ void networkTask(void *param) {
                                     String stateKey = String(playing ? "1|" : "0|") + title + "|" + artist;
                                     if (playing) {
                                         char statBuf[64];
-                                        snprintf(statBuf, sizeof(statBuf), "Playing: %.22s", title);
+                                        if (prov == 3) {
+                                            snprintf(statBuf, sizeof(statBuf), "All (Last.fm): %.20s", title);
+                                        } else {
+                                            snprintf(statBuf, sizeof(statBuf), "Playing: %.22s", title);
+                                        }
                                         setCloudMusicStatus(statBuf);
 
                                         if (stateKey != _cloudLastKey) {
                                             _cloudLastKey = stateKey;
                                             _cloudWasPlaying = true;
-                                            updateMusicState(true, title, artist, 0, 180, 0);
+                                            updateMusicState(true, title, artist, 0, 180, 1, 2);
                                         }
                                     } else {
-                                        setCloudMusicStatus("Last.fm: Connected (idle)");
+                                        setCloudMusicStatus(prov == 3 ? "All: Listening to all sources (idle)" : "Last.fm: Connected (idle)");
                                         if (_cloudWasPlaying) {
                                             _cloudWasPlaying = false;
                                             _cloudLastKey = stateKey;
-                                            updateMusicState(false, title, artist, 0, 180, 0);
+                                            updateMusicState(false, title, artist, 0, 180, 1, 2);
                                         }
                                     }
                                 } else {
@@ -1316,7 +1327,7 @@ void networkTask(void *param) {
                             setCloudMusicStatus("Last.fm: Connect fail");
                         }
                     }
-                } else if (prov == 2) {
+                } else if (prov == 2 || (prov == 3 && (getMusicToken().length() > 0 || getMusicUser().length() > 0))) {
                     // Provider 2: Spotify Web API (Bearer token or Refresh Token in NVS)
                     static String _spAccessToken = "";
                     String clientId     = getMusicUser();
@@ -1366,31 +1377,25 @@ void networkTask(void *param) {
                                     const char *artist = doc["item"]["artists"][0]["name"] | "";
                                     int progSec = (int)((doc["progress_ms"] | 0) / 1000);
                                     int durSec  = (int)((doc["item"]["duration_ms"] | 180000) / 1000);
-                                    updateMusicState(playing, title, artist, progSec, durSec, -1);
+                                    updateMusicState(playing, title, artist, progSec, durSec, 1, 2);
                                     String stateKey = String(playing ? "1|" : "0|") + title + "|" + artist;
                                     if (playing != _cloudWasPlaying || stateKey != _cloudLastKey) {
                                         _cloudWasPlaying = playing;
                                         _cloudLastKey = stateKey;
-                                        NetworkEvent evt = {};
-                                        evt.kind = NetworkEvent::MUSIC_UPDATE;
-                                        evt.connected = playing;
-                                        xQueueSend(networkEventQueue, &evt, pdMS_TO_TICKS(10));
                                     }
                                 }
                                 http.end();
                             } else if (code == 204 && _cloudWasPlaying) {
                                 _cloudWasPlaying = false;
-                                updateMusicState(false, nullptr, nullptr, -1, -1, -1);
-                                NetworkEvent evt = {};
-                                evt.kind = NetworkEvent::MUSIC_UPDATE;
-                                evt.connected = false;
-                                xQueueSend(networkEventQueue, &evt, pdMS_TO_TICKS(10));
+                                updateMusicState(false, nullptr, nullptr, 0, 180, 1, 2);
                                 http.end();
                             } else {
                                 http.end();
                             }
                         }
                     }
+                } else if (prov == 3) {
+                    setCloudMusicStatus("All: Listening to Extension & MQTT");
                 }
             }
         }

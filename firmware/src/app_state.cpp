@@ -35,12 +35,13 @@ MusicState musicState = {
     "QBIT Music",
     0,
     180,
+    1,
     0,
     0
 };
 
 void updateMusicState(bool playing, const char *title, const char *artist,
-                      uint16_t progressSec, uint16_t durationSec, uint8_t style) {
+                      uint16_t progressSec, uint16_t durationSec, uint8_t style, uint8_t source) {
     musicState.playing = playing;
     if (title && title[0] != '\0') {
         strncpy(musicState.title, title, sizeof(musicState.title) - 1);
@@ -54,6 +55,7 @@ void updateMusicState(bool playing, const char *title, const char *artist,
     musicState.durationSec  = (durationSec > 0) ? durationSec : 180;
     musicState.style        = style;
     musicState.lastUpdateMs = millis();
+    musicState.source       = source;
 
     if (networkEventQueue) {
         NetworkEvent evt = {};
